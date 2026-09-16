@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pixelperfect-plus"
+version = "0.1.0"
+description = "Deterministic, alpha-aware restoration of pseudo pixel art grids"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "scipy>=1.10", "Pillow>=10"]
+readme = "README.md"
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+pixelperfect = "pixelperfect.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["source"]
+include = ["pixelperfect*"]
+
+[tool.pytest.ini_options]
+testpaths = ["source/tests"]
+pythonpath = ["source"]
+addopts = "-ra"
+cache_dir = "source/.pytest_cache"
