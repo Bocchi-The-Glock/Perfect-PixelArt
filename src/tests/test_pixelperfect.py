@@ -1,0 +1,820 @@
+"""Regression tests for pixel recovery, CLI, and comparison input handling."""
+from __future__ import annotations
+
+import io
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+import numpy as np
+import pytest
+from PIL import Image, ImageFilter
+
+from pixelperfect import Config, pixelize, save_result
+from pixelperfect.features import extract_features
+from pixelperfect.grid import detect_grid, make_lines
+from pixelperfect.image_io import load_image
+from pixelperfect.palette import quantize_cells
+from pixelperfect.sampling import recover_cells
+
+
+# COMPARISON INPUT HANDLING
+def test_white_input_ignores_hidden_rgb_and_blends_partial_alpha(tmp_path):
+    from compare_programs import white_input
+
+    rgba = np.array([[[240, 20, 180, 0], [20, 40, 60, 128],
+                      [10, 30, 50, 255]]], dtype=np.uint8)
+    path = tmp_path / "rgba.png"
+    Image.fromarray(rgba).save(path)
+    prepared = white_input(path)
+    expected = np.array([[[255, 255, 255], [137, 147, 157], [10, 30, 50]]], dtype=np.uint8)
+    assert prepared.mode == "RGB"
+    np.testing.assert_array_equal(np.array(prepared), expected)
+    rgba[0, 0, :3] = [0, 255, 0]
+    Image.fromarray(rgba).save(path)
+    np.testing.assert_array_equal(np.array(white_input(path)), expected)
+
+
+def test_white_input_preserves_opaque_rgb(tmp_path):
+    from compare_programs import white_input
+
+    path = tmp_path / "rgb.png"
+    rgb = np.array([[[0, 0, 0], [255, 0, 0]], [[20, 40, 60], [255, 255, 255]]], dtype=np.uint8)
+    Image.fromarray(rgb).save(path)
+    np.testing.assert_array_equal(np.array(white_input(path)), rgb)
+
+
+def test_comparison_passes_same_white_pixels_to_main_and_real_plus_cli(tmp_path, monkeypatch):
+    import hashlib
+    import compare_programs as comparison
+
+    path = tmp_path / "source.png"
+    rgba = np.zeros((8, 8, 4), dtype=np.uint8)
+    rgba[..., :3] = [220, 50, 180]  # Hidden RGB must not reach either algorithm.
+    rgba[2:6, 2:6] = [15, 40, 75, 255]
+    Image.fromarray(rgba).save(path)
+    original_bytes = path.read_bytes()
+    expected = np.array(comparison.white_input(path))
+    calls = []
+
+    def main_spy(rgb):
+        np.testing.assert_array_equal(rgb, expected)
+        calls.append("main")
+        return rgb.shape[1], rgb.shape[0], rgb
+
+    real_run = comparison.subprocess.run
+
+    def inspect_then_run(command, **kwargs):
+        with Image.open(command[command.index("-i") + 1]) as image:
+            assert image.mode == "RGB"
+            np.testing.assert_array_equal(np.array(image), expected)
+        assert command[2::2] == ["-i", "-o"]  # No grid or sampling overrides.
+        calls.append("plus")
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr(comparison.subprocess, "run", inspect_then_run)
+    _, _, plus_image, record = comparison.run_pair(path, tmp_path / "results", main_spy)
+    assert calls == ["main", "plus"]
+    assert record["plus"]["returncode"] == 0
+    assert plus_image is not None
+    assert record["shared_input"]["sha256_rgb"] == hashlib.sha256(expected.tobytes()).hexdigest()
+    assert path.read_bytes() == original_bytes
+
+
+# GRID
+def random_grid(width=12, height=10, spacing=8, seed=7):
+    truth = np.ones((height, width, 4), np.float32)
+    truth[..., :3] = np.random.default_rng(seed).uniform(.05, .95, (height, width, 3))
+    return truth.repeat(spacing,0).repeat(spacing,1), truth
+
+
+def detect(image, config=None):
+    return detect_grid(extract_features(image), image.shape, config or Config())
+
+
+def test_clean_grid_and_harmonics():
+    image,_ = random_grid()
+    grid, report = detect(image, Config(local_warp="off"))
+    assert (grid.sx,grid.sy,grid.phase_x,grid.phase_y) == (8.,8.,0.,0.)
+    assert (len(grid.x_lines)-1,len(grid.y_lines)-1) == (12,10)
+    spacings=[c["spacing"] for c in report["candidates"]]
+    assert [4.,4.] in spacings and [16.,16.] in spacings
+    assert len(report["refined"]) <= 3
+
+
+def test_shifted_crop_recovers_phase_and_covers_input():
+    image,_ = random_grid(16,14)
+    image=image[5:-2,3:-1]
+    grid,_=detect(image)
+    assert abs(grid.sx-8)<.05 and abs(grid.sy-8)<.05
+    assert abs(grid.phase_x-5)<.15 and abs(grid.phase_y-3)<.15
+    assert grid.x_lines[0] == grid.y_lines[0] == 0
+    assert grid.x_lines[-1] == image.shape[1] and grid.y_lines[-1] == image.shape[0]
+    assert np.all(np.diff(grid.x_lines)>0) and np.all(np.diff(grid.y_lines)>0)
+
+
+def test_partial_fragments_have_consistent_rule():
+    np.testing.assert_array_equal(make_lines(18,8,1),[0,9,18])
+    np.testing.assert_array_equal(make_lines(18,8,2),[0,2,10,18])
+    np.testing.assert_array_equal(make_lines(17,8,0),[0,8,17])
+
+
+def test_target_count_remains_exact_under_phase_shift():
+    image,_=random_grid()
+    image=np.roll(image,2,axis=1)
+    grid,_=detect(image,Config(target_size=(12,10)))
+    assert len(grid.x_lines)==13 and len(grid.y_lines)==11
+    assert grid.x_lines[0]==0 and grid.x_lines[-1]==image.shape[1]
+    assert np.all(np.diff(grid.x_lines)>0)
+
+
+def test_alpha_hidden_rgb_cannot_create_edges_or_fft_evidence():
+    image,_=random_grid()
+    image[:,:32,3]=0
+    other=image.copy()
+    other[:,:32,:3]=np.random.default_rng(31).random(other[:,:32,:3].shape)
+    a,b=extract_features(image),extract_features(other)
+    np.testing.assert_array_equal(a.gradient_x,b.gradient_x)
+    np.testing.assert_array_equal(a.gradient_y,b.gradient_y)
+    np.testing.assert_array_equal(a.spectrum,b.spectrum)
+
+
+def test_equal_luminance_colour_edges_remain_visible():
+    image=np.ones((32,64,4),np.float32)
+    image[...,:3]=[1,0,0]
+    image[:,32:,:3]=[0,.299/.587,0]
+    assert extract_features(image).gradient_x[:,32].mean()>.3
+
+
+def test_flat_and_transparent_images_have_no_automatic_grid():
+    for image in (np.ones((64,64,4),np.float32),np.zeros((64,64,4),np.float32)):
+        assert detect(image)[0] is None
+        assert detect(image,Config(pixel_size=8))[0] is not None
+
+
+def test_missing_same_colour_boundaries_still_find_base_scale():
+    _,truth=random_grid(18,16)
+    truth[2:7,2:12,:3]=truth[2,2,:3]
+    grid,_=detect(truth.repeat(8,0).repeat(8,1))
+    assert grid.sx==8 and grid.sy==8
+
+
+def test_local_walk_recovers_bounded_drift_without_crossing():
+    _,truth=random_grid(16,14)
+    widths=np.tile([8,9,8,7],4)
+    heights=np.tile([8,9,8,7],4)[:14]
+    image=np.repeat(np.repeat(truth,heights,0),widths,1)
+    grid,_=detect(image,Config(pixel_size=8))
+    assert grid.warped
+    np.testing.assert_allclose(grid.x_lines,np.r_[0,np.cumsum(widths)])
+    np.testing.assert_allclose(grid.y_lines,np.r_[0,np.cumsum(heights)])
+    assert np.all(np.diff(grid.x_lines)>0)
+
+
+def test_noninteger_manual_grid_and_repeatability():
+    image,_=random_grid()
+    config=Config(pixel_size=(7.5,8.25),local_warp="off")
+    a,ar=detect(image,config); b,br=detect(image,config)
+    assert a.sx==7.5 and a.sy==8.25
+    np.testing.assert_array_equal(a.x_lines,b.x_lines)
+    assert ar==br
+
+
+def test_noninteger_automatic_spacing_with_raster_rounding():
+    _,truth=random_grid(22,18)
+    sx,sy=7.3,7.8
+    xi=np.minimum((np.arange(round(22*sx))/sx).astype(int),21)
+    yi=np.minimum((np.arange(round(18*sy))/sy).astype(int),17)
+    image=truth[yi[:,None],xi[None,:]]
+    grid,_=detect(image)
+    assert abs(grid.sx-sx)<.06 and abs(grid.sy-sy)<.06
+    assert len(grid.x_lines)==23 and len(grid.y_lines)==19
+
+
+def test_unstructured_noise_and_smooth_ramp_do_not_establish_grid():
+    rng=np.random.default_rng(919)
+    noise=np.ones((96,96,4),np.float32)
+    noise[...,:3]=rng.random((96,96,3))
+    flat=noise.copy(); flat[...,:3]=np.clip(rng.normal(.5,.025,(96,96,3)),0,1)
+    ramp=np.ones_like(noise)
+    ramp[...,:3]=((np.arange(96)[:,None]+np.arange(96)[None,:])/190)[...,None]
+    for image in (noise,flat,ramp):
+        assert detect(image)[0] is None
+
+
+def test_noise_rejection_searches_all_proposals_without_chance_grid():
+    for seed in range(10):
+        image=np.ones((96,96,4),np.float32)
+        image[...,:3]=np.random.default_rng(seed).random((96,96,3))
+        assert detect(image)[0] is None
+
+
+# SAMPLING
+def test_robust_beats_center_with_center_outlier():
+    image=np.ones((8,8,4),np.float32); image[...,:3]=[.7,.15,.3]
+    image[4,4,:3]=[0,1,0]
+    robust=recover_cells(image,[0,8],[0,8])
+    center=recover_cells(image,[0,8],[0,8],"center")
+    assert np.linalg.norm(robust.rgba[0,0,:3]-image[0,0,:3])<.01
+    assert np.linalg.norm(center.rgba[0,0,:3]-image[0,0,:3])>.5
+
+
+@pytest.mark.parametrize("method",["robust","center","median"])
+def test_hidden_rgb_does_not_change_result(method):
+    image=np.zeros((16,16,4),np.float32); image[3:13,3:13]=[.3,.7,.2,1]
+    other=image.copy(); other[other[...,3]==0,:3]=np.random.default_rng(4).random((156,3))
+    cuts=[0,4,8,12,16]
+    a=recover_cells(image,cuts,cuts,method); b=recover_cells(other,cuts,cuts,method)
+    np.testing.assert_array_equal(a.rgba,b.rgba)
+    np.testing.assert_array_equal(a.confidence,b.confidence)
+    assert np.all(a.rgba[a.rgba[...,3]==0,:3]==0)
+
+
+def test_fractional_nominal_cuts_use_documented_integer_coverage():
+    image=np.ones((2,3,4),np.float32); image[:,0,3]=0
+    # New fast model snaps 1.5 to source boundary 2 (NumPy ties-to-even).
+    cells=recover_cells(image,[0,1.5,3],[0,2],alpha_mode="coverage")
+    assert cells.rgba[0,0,3]==pytest.approx(.5)
+    assert cells.rgba[0,1,3]==1
+    np.testing.assert_allclose(cells.rgba[0,0,:3],1)
+
+
+def test_line_hole_and_isolated_highlight_are_preserved():
+    truth=np.ones((7,7,4),np.float32); truth[...,:3]=[.2,.3,.5]
+    truth[:,2,:3]=[.9,.1,.1]; truth[3,4]=[0,0,0,0]; truth[1,5,:3]=[1,1,.7]
+    cuts=np.arange(8)*6
+    cells=recover_cells(truth.repeat(6,0).repeat(6,1),cuts,cuts)
+    np.testing.assert_allclose(cells.rgba,truth,atol=1e-6)
+
+
+def test_input_supported_minority_line_can_be_promoted():
+    image=np.ones((24,24,4),np.float32); image[...,:3]=.8; image[:,11:13,:3]=.1
+    cuts=[0,8,16,24]
+    cells=recover_cells(image,cuts,cuts)
+    assert np.all(cells.rgba[:,1,0]<.2)
+    assert cells.structure["supported_central_strokes"]>=1
+
+
+def test_coherent_minority_highlight_survives_but_single_hot_pixel_does_not():
+    cuts=[0,8,16,24]
+    image=np.ones((24,24,4),np.float32); image[...,:3]=.15
+    image[11:13,11:13,:3]=1
+    assert recover_cells(image,cuts,cuts).rgba[1,1,0]>.9
+    image[11:13,11:13,:3]=.15; image[12,12,:3]=1
+    assert recover_cells(image,cuts,cuts).rgba[1,1,0]<.2
+
+
+def test_palette_is_deterministic_bounded_and_alpha_preserving():
+    image=np.random.default_rng(23).random((8,8,4),dtype=np.float32)
+    image[...,3]=1; image[0,:,3]=0
+    cells=recover_cells(image,np.arange(9),np.arange(9))
+    a=quantize_cells(cells,5); b=quantize_cells(cells,5)
+    np.testing.assert_array_equal(a.rgba,b.rgba)
+    np.testing.assert_array_equal(a.rgba[...,3],image[...,3])
+    assert len(np.unique(a.rgba[a.rgba[...,3]>0,:3],axis=0))<=5
+    assert np.all(a.rgba[0,:,:3]==0)
+
+
+def test_palette_keeps_rare_highlight_line_and_transparent_hole():
+    truth=np.ones((9,9,4),np.float32); truth[...,:3]=[.1,.25,.35]
+    truth[...,0]+=np.arange(9)[None,:]*.025
+    truth[:,2,:3]=[.9,.12,.1]; truth[2,6,:3]=1; truth[6,6,3]=0
+    cuts=np.arange(10)*4
+    reduced=quantize_cells(recover_cells(truth.repeat(4,0).repeat(4,1),cuts,cuts),4)
+    np.testing.assert_array_equal(reduced.rgba[2,6,:3],[1,1,1])
+    assert np.all(np.linalg.norm(reduced.rgba[:,2,:3]-reduced.rgba[:,1,:3],axis=1)>.4)
+    assert reduced.rgba[6,6,3]==0
+
+
+def test_hidden_rgb_does_not_consume_palette_budget():
+    image=np.zeros((8,8,4),np.float32)
+    image[...,:3]=np.random.default_rng(93).random((8,8,3))
+    image[3,3]=[.8,.1,.2,1]; image[4,4]=[.2,.7,.1,.5]
+    cuts=np.arange(9); cells=recover_cells(image,cuts,cuts)
+    np.testing.assert_array_equal(quantize_cells(cells,2).rgba,cells.rgba)
+
+
+@pytest.mark.parametrize("colors",[0,-1,257,2.5,True])
+def test_invalid_palette(colors):
+    cells=recover_cells(np.ones((2,2,4),np.float32),[0,2],[0,2])
+    with pytest.raises(ValueError):
+        quantize_cells(cells,colors)
+
+
+@pytest.mark.parametrize("lines",[[0,1,1,2],[0,3],[1,2],[0,float("nan"),2],[0,.1,2]])
+def test_invalid_lines(lines):
+    with pytest.raises(ValueError,match="cut lines"):
+        recover_cells(np.ones((2,2,4),np.float32),lines,[0,2])
+
+
+def test_invalid_sampling():
+    with pytest.raises(ValueError,match="sampling"):
+        recover_cells(np.ones((2,2,4),np.float32),[0,2],[0,2],"unknown")
+
+
+def test_stratification_missed_visible_island_uses_visible_rgb():
+    image=np.zeros((40,40,4),np.float32); image[...,:3]=[.8,.1,.9]; image[0,0]=[.1,.8,.2,1]
+    cells=recover_cells(image,[0,40],[0,40],alpha_mode="coverage")
+    np.testing.assert_allclose(cells.rgba[0,0,:3],[.1,.8,.2])
+    assert cells.rgba[0,0,3]==pytest.approx(1/1600)
+
+
+# PIPELINE
+def truth_image(width=12, height=10, seed=23, rgba=False):
+    rng = np.random.default_rng(seed)
+    palette = np.array([[25, 35, 60], [235, 82, 73], [245, 210, 92],
+                        [55, 165, 155], [118, 82, 183], [230, 230, 235]], np.uint8)
+    data = palette[rng.integers(0, len(palette), size=(height, width))]
+    if rgba:
+        alpha = np.full((height, width, 1), 255, np.uint8)
+        alpha[:2] = 0
+        alpha[:, :2] = 0
+        data = np.concatenate([data, alpha], axis=2)
+    return Image.fromarray(data)
+
+
+def enlarged(image, factor=8):
+    return image.resize((image.width * factor, image.height * factor), Image.Resampling.NEAREST)
+
+
+def test_clean_automatic_grid_dimensions_and_colors():
+    truth = truth_image()
+    result = pixelize(enlarged(truth), Config(local_warp="off"))
+    assert result.image.size == truth.size, result.diagnostics
+    assert np.abs(np.asarray(result.image, dtype=float) - np.asarray(truth, dtype=float)).max() <= 2
+    assert 0 <= result.confidence <= 1
+    assert result.grid
+    assert result.timings and all(value >= 0 for value in result.timings.values())
+
+
+def test_target_size_and_nearest_neighbor_export(tmp_path):
+    truth = truth_image(8, 6)
+    result = pixelize(enlarged(truth, 7), Config(target_size=truth.size))
+    assert result.image.size == (8, 6)
+    destination = tmp_path / "enlarged.png"
+    save_result(result, destination, scale=4)
+    with Image.open(destination) as saved:
+        assert saved.size == (32, 24)
+        expected = np.asarray(result.image.resize(saved.size, Image.Resampling.NEAREST))
+        np.testing.assert_array_equal(np.asarray(saved), expected)
+
+
+def test_seed_free_repeatability():
+    truth = truth_image(9, 7)
+    image = enlarged(truth, 9).filter(ImageFilter.GaussianBlur(0.45))
+    config = Config(target_size=truth.size, colors=5)
+    first = pixelize(image, config)
+    second = pixelize(image, config)
+    np.testing.assert_array_equal(np.asarray(first.image), np.asarray(second.image))
+    assert first.grid == second.grid
+    assert first.confidence == second.confidence
+
+
+def test_fully_transparent_hidden_rgb_does_not_change_result():
+    truth = truth_image(10, 8, rgba=True)
+    clean = np.asarray(enlarged(truth), dtype=np.uint8).copy()
+    changed = clean.copy()
+    mask = changed[..., 3] == 0
+    changed[mask, :3] = np.random.default_rng(91).integers(0, 256, (mask.sum(), 3), dtype=np.uint8)
+    first = pixelize(clean, Config(target_size=truth.size))
+    second = pixelize(changed, Config(target_size=truth.size))
+    a, b = np.asarray(first.image), np.asarray(second.image)
+    np.testing.assert_array_equal(a, b)
+    np.testing.assert_array_equal(a[..., 3] == 0, np.asarray(truth)[..., 3] == 0)
+    assert first.confidence == second.confidence
+
+
+def test_single_pixel_line_highlight_and_hole_are_not_removed():
+    # All structures are one *true grid cell* wide, so their support is unambiguous.
+    data = np.full((11, 11, 4), [35, 45, 80, 255], np.uint8)
+    data[1:10, 2] = [235, 50, 65, 255]
+    data[7, 2:8] = [235, 50, 65, 255]
+    data[3, 8] = [255, 250, 225, 255]
+    data[5, 5] = [0, 0, 0, 0]
+    result = pixelize(enlarged(Image.fromarray(data)), Config(target_size=(11, 11)))
+    out = np.asarray(result.image)
+    assert np.max(np.abs(out[1:10, 2, :3].astype(int) - data[1:10, 2, :3])) <= 2
+    assert np.max(np.abs(out[3, 8, :3].astype(int) - data[3, 8, :3])) <= 2
+    assert out[5, 5, 3] == 0
+
+
+def test_robust_sampling_resists_center_impulses_better_than_center():
+    truth = truth_image(8, 6)
+    image = np.asarray(enlarged(truth, 9)).copy()
+    for row in range(truth.height):
+        for column in range(truth.width):
+            image[row * 9 + 4, column * 9 + 4] = [255, 0, 255]
+    target = np.asarray(truth).astype(float)
+    errors = {}
+    for sampling in ("center", "median", "robust"):
+        result = pixelize(image, Config(target_size=truth.size, sampling=sampling, local_warp="off"))
+        errors[sampling] = np.mean(np.abs(np.asarray(result.image).astype(float) - target))
+    assert errors["robust"] < errors["center"] * 0.25, errors
+    assert errors["robust"] < 5, errors
+
+
+def test_constant_image_falls_back_without_inventing_grid():
+    image = Image.new("RGB", (37, 29), (65, 95, 120))
+    result = pixelize(image, Config())
+    assert result.image.size == image.size
+    assert result.confidence < 0.5
+    assert result.diagnostics
+    np.testing.assert_array_equal(np.asarray(result.image), np.asarray(image))
+
+
+@pytest.mark.parametrize("size", [(1, 1), (1, 5), (2, 2)])
+def test_tiny_inputs_have_defined_nonempty_outputs(size):
+    result = pixelize(Image.new("RGBA", size, (15, 45, 80, 0)), Config())
+    assert result.image.width >= 1 and result.image.height >= 1
+    assert np.asarray(result.image)[..., 3].max() == 0
+    assert result.confidence < 0.5
+
+
+@pytest.mark.parametrize("kind", ["noninteger", "blur", "jpeg", "crop", "same_color_runs", "texture", "drift"])
+def test_degraded_or_ambiguous_inputs_report_diagnostics_and_remain_valid(kind):
+    """These cases are quality probes, not assertions of unique automatic recovery."""
+    truth = truth_image(10, 8)
+    source = enlarged(truth)
+    if kind == "noninteger":
+        source = truth.resize((75, 60), Image.Resampling.BILINEAR)
+    elif kind == "blur":
+        source = source.filter(ImageFilter.GaussianBlur(0.7))
+    elif kind == "jpeg":
+        buffer = io.BytesIO()
+        source.save(buffer, format="JPEG", quality=70)
+        buffer.seek(0)
+        source = Image.open(buffer).convert("RGB")
+    elif kind == "crop":
+        source = source.crop((3, 2, source.width - 2, source.height - 1))
+    elif kind == "same_color_runs":
+        data = np.asarray(truth).copy()
+        data[:, 3:7] = data[:, 3:4]
+        source = enlarged(Image.fromarray(data))
+    elif kind == "texture":
+        data = np.asarray(source).copy()
+        data[::3, ::3] = np.clip(data[::3, ::3].astype(int) + 25, 0, 255)
+        source = Image.fromarray(data)
+    elif kind == "drift":
+        data = np.asarray(truth)
+        widths = np.array([8, 9, 8, 7, 8, 9, 8, 7, 8, 8])
+        heights = np.array([8, 9, 8, 7, 8, 9, 8, 7])
+        source = Image.fromarray(np.repeat(np.repeat(data, heights, axis=0), widths, axis=1))
+    result = pixelize(source, Config())
+    assert 0 <= result.confidence <= 1
+    assert result.image.width > 0 and result.image.height > 0
+    assert result.image.width <= source.width and result.image.height <= source.height
+    assert result.diagnostics and result.timings
+
+
+def test_numpy_float_and_pillow_inputs_agree():
+    image = enlarged(truth_image(6, 5))
+    config = Config(target_size=(6, 5))
+    as_pillow = pixelize(image, config)
+    as_float = pixelize(np.asarray(image, dtype=np.float32) / 255, config)
+    np.testing.assert_array_equal(np.asarray(as_pillow.image), np.asarray(as_float.image))
+
+
+def test_corrupt_input_is_rejected(tmp_path):
+    path = tmp_path / "corrupt.png"
+    path.write_bytes(b"this is not an image")
+    with pytest.raises((ValueError, OSError)):
+        pixelize(path, Config())
+
+
+@pytest.mark.parametrize("values", [
+    {"pixel_size": 0}, {"target_size": (0, 4)}, {"scale": 0},
+    {"colors": 0}, {"sampling": "unknown"}, {"local_warp": "unknown"},
+    {"pixel_size": 8, "target_size": (8, 8)},
+    {"min_pixel_size": 16, "max_pixel_size": 8},
+])
+def test_invalid_configuration_is_rejected(values):
+    with pytest.raises((ValueError, TypeError)):
+        pixelize(Image.new("RGB", (64, 64)), Config(**values))
+
+
+def test_palette_budget_counts_visible_colors_only():
+    truth = truth_image(9, 7, rgba=True)
+    result = pixelize(enlarged(truth), Config(target_size=truth.size, colors=3))
+    data = np.asarray(result.image)
+    assert data.shape[2] == 4
+    colors = np.unique(data[data[..., 3] > 0, :3], axis=0)
+    assert len(colors) <= 3
+    np.testing.assert_array_equal(data[..., 3] == 0, np.asarray(truth)[..., 3] == 0)
+
+
+def test_semitransparent_alpha_and_straight_color_survive_clean_recovery():
+    data = np.asarray(truth_image(6, 4, rgba=True)).copy()
+    data[2:, 2:, 3] = np.array([[64, 128, 192, 255], [255, 192, 128, 64]], np.uint8)
+    result = pixelize(enlarged(Image.fromarray(data)), Config(target_size=(6, 4)))
+    out = np.asarray(result.image)
+    visible = data[..., 3] > 0
+    assert np.abs(out[..., 3].astype(int) - data[..., 3]).max() <= 1
+    assert np.abs(out[visible, :3].astype(int) - data[visible, :3]).max() <= 2
+
+
+def test_conflicting_target_aspect_ratio_is_explicitly_rejected():
+    with pytest.raises(ValueError, match="aspect ratio"):
+        pixelize(Image.new("RGB", (80, 60)), Config(target_size=(8, 8)))
+
+
+# IO SCORING
+def test_exif_orientation():
+    im=Image.new("RGB",(20,10)); im.getexif()[274]=6
+    assert load_image(im).rgba.shape==(20,10,4)
+
+
+@pytest.mark.parametrize("kwargs",[{"pixel_size":0},{"pixel_size":float("nan")},{"scale":0},
+    {"target_size":(0,4)},{"colors":257},{"max_pixel_size":1},{"sampling":"bad"},
+    {"local_warp":"bad"},{"pixel_size":4,"target_size":(8,8)}])
+def test_bad_config(kwargs):
+    with pytest.raises(ValueError): Config(**kwargs)
+
+
+def test_bad_float_image():
+    with pytest.raises(ValueError): load_image(np.ones((2,2,3),np.float32)*np.nan)
+
+
+def test_constant_fallback_still_honors_palette_request():
+    result=pixelize(Image.new("RGBA",(7,5),(50,90,30,0)),Config(colors=2))
+    assert result.image.size==(7,5)
+    assert np.asarray(result.image).sum()==0
+
+
+def test_square_target_does_not_silently_use_rectangular_spacing():
+    with pytest.raises(ValueError,match="square"):
+        pixelize(Image.new("RGB",(80,81)),Config(target_size=(10,10),square=True))
+
+
+@pytest.mark.parametrize("size",[(17,19),(18,20),(1,1),(1,5)])
+def test_debug_bundle_even_odd_tiny_and_fallback(tmp_path,size):
+    import json
+    result=pixelize(Image.new("RGBA",size,(40,80,120,0)))
+    save_result(result,tmp_path/"sprite.png")
+    debug=tmp_path/"sprite_debug"
+    assert {p.name for p in debug.iterdir()}=={"fft.png","edges.png","grid.png","profiles.png","curvature.png","info.json","info.txt"}
+    report=json.loads((debug/"info.json").read_text(encoding="utf-8"))
+    assert report["grid"]["output_size"]==list(size)
+    assert report["grid"]["fallback"] is True
+    for name in ["fft.png","edges.png","grid.png","profiles.png","curvature.png"]:
+        with Image.open(debug/name) as im:
+            im.verify()
+
+
+def test_pipeline_and_export_need_no_scipy_opencv_or_matplotlib(tmp_path,monkeypatch):
+    import builtins
+    original=builtins.__import__
+    def guarded(name,*args,**kwargs):
+        if name.split(".")[0] in {"scipy","cv2","matplotlib","sklearn"}:
+            raise AssertionError("Unexpected runtime dependency: "+name)
+        return original(name,*args,**kwargs)
+    monkeypatch.setattr(builtins,"__import__",guarded)
+    truth=np.random.default_rng(97).integers(0,256,(8,9,4),dtype=np.uint8)
+    truth[...,3]=255
+    result=pixelize(truth.repeat(8,0).repeat(8,1))
+    assert result.image.size==(9,8)
+    save_result(result,tmp_path/"minimal.png")
+    assert (tmp_path/"minimal_debug"/"fft.png").is_file()
+
+
+# CLI
+SOURCE = Path(__file__).resolve().parents[1]
+SCRIPT = SOURCE / "pixelperfect.py"
+if not SCRIPT.exists():
+    SCRIPT = SOURCE.parent / "pixelperfect.py"
+
+
+def invoke(*arguments, cwd):
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(SOURCE) + os.pathsep + env.get("PYTHONPATH", "")
+    return subprocess.run([sys.executable, str(SCRIPT), *map(str, arguments)],
+                          cwd=cwd, env=env, capture_output=True, text=True, timeout=120)
+
+
+def make_input(path):
+    rng = np.random.default_rng(18)
+    low = Image.fromarray(rng.integers(20, 235, (6, 8, 3), dtype=np.uint8))
+    low.resize((64, 48), Image.Resampling.NEAREST).save(path)
+    return low
+
+
+def test_cli_always_creates_result_and_diagnostics(tmp_path):
+    source = tmp_path / "input.png"
+    truth = make_input(source)
+    output = tmp_path / "result.png"
+    completed = invoke("-i", source, "-o", output, cwd=tmp_path)
+    assert completed.returncode == 0, completed.stderr
+    assert "grid=" in completed.stdout and "pixel spacing=" in completed.stdout
+    assert {p.name for p in tmp_path.iterdir()} == {"input.png", "result.png", "result_debug"}
+    with Image.open(output) as result:
+        assert result.format == "PNG"
+        assert result.size == truth.size
+
+
+def test_cli_target_size_and_scale(tmp_path):
+    source = tmp_path / "input.png"
+    make_input(source)
+    output = tmp_path / "result.png"
+    completed = invoke("-i", source, "-o", output, "--target-size", "8x6", "--scale", "4", cwd=tmp_path)
+    assert completed.returncode == 0, completed.stderr
+    with Image.open(output) as result:
+        assert result.size == (32, 24)
+        data = np.asarray(result)
+        np.testing.assert_array_equal(data, np.repeat(np.repeat(data[::4, ::4], 4, axis=0), 4, axis=1))
+
+
+def test_cli_explicit_debug_and_verbose(tmp_path):
+    source = tmp_path / "input.png"
+    make_input(source)
+    output = tmp_path / "result.png"
+    debug = tmp_path / "debug"
+    completed = invoke("-i", source, "-o", output, "--target-size", "8x6", "--debug-dir", debug,
+                       "--verbose", cwd=tmp_path)
+    assert completed.returncode == 0, completed.stderr
+    assert list(debug.glob("*.json")), list(debug.iterdir())
+    assert len(list(debug.glob("*.png"))) >= 2
+    assert completed.stderr.strip()
+
+
+def test_cli_rejects_mutually_exclusive_constraints(tmp_path):
+    source = tmp_path / "input.png"
+    make_input(source)
+    completed = invoke("-i", source, "-o", tmp_path / "out.png", "--pixel-size", "8",
+                       "--target-size", "8x6", cwd=tmp_path)
+    assert completed.returncode != 0
+    assert not (tmp_path / "out.png").exists()
+
+
+def test_cli_corrupt_input_has_short_error(tmp_path):
+    source = tmp_path / "corrupt.jpg"
+    source.write_bytes(b"not jpeg")
+    completed = invoke("-i", source, "-o", tmp_path / "out.png", cwd=tmp_path)
+    assert completed.returncode != 0
+    assert "Traceback" not in completed.stderr
+    assert completed.stderr.strip()
+    assert not (tmp_path / "out.png").exists()
+
+
+def test_cli_constant_input_warns_and_still_writes(tmp_path):
+    source = tmp_path / "constant.png"
+    Image.new("RGB", (31, 29), "navy").save(source)
+    output = tmp_path / "result.png"
+    completed = invoke("-i", source, "-o", output, cwd=tmp_path)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stderr.strip()
+    with Image.open(output) as result:
+        assert result.size == (31, 29)
+
+
+def test_cli_noninteger_pixel_size_is_accepted(tmp_path):
+    source = tmp_path / "input.png"
+    make_input(source)
+    completed = invoke("-i", source, "-o", tmp_path / "result.png", "--pixel-size", "8.0x8.0", cwd=tmp_path)
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_cli_alpha_policy_and_diagnostic_report(tmp_path):
+    import json
+    source = tmp_path / "translucent.png"
+    Image.new("RGBA", (16, 16), (20, 30, 40, 180)).save(source)
+    for mode, expected in [("binary", 255), ("coverage", 180)]:
+        target = tmp_path / (mode + ".png")
+        completed = invoke("-i", source, "-o", target, "--alpha-mode", mode, cwd=tmp_path)
+        assert completed.returncode == 0, completed.stderr
+        assert np.all(np.asarray(Image.open(target))[..., 3] == expected)
+        info = json.loads((tmp_path / (mode + "_debug") / "info.json").read_text(encoding="utf-8"))
+        assert info["diagnostics"]["structure"]["alpha_mode"] == mode
+
+
+def test_input_only_writes_named_png_and_debug_to_project_output(tmp_path,monkeypatch):
+    import json
+    import pixelperfect.__main__ as cli
+    project=tmp_path/"checkout"
+    project.mkdir()
+    (project/"pixelperfect.py").write_text("# checkout marker")
+    monkeypatch.setattr(cli,"__file__",str(project/"src"/"pixelperfect"/"__main__.py"))
+    source=tmp_path/"my sprite.jpg"
+    make_input(source)
+    assert cli.main(["-i",str(source)])==0
+    target=project/"output"/"my sprite.png"
+    assert target.is_file()
+    debug=target.with_name("my sprite_debug")
+    assert (debug/"fft.png").is_file() and (debug/"edges.png").is_file()
+    info=json.loads((debug/"info.json").read_text(encoding="utf-8"))
+    assert info["grid"]["output_size"]==list(Image.open(target).size)
+    assert info["export"]["path"]==str(target)
+
+
+def test_cli_never_overwrites_source(tmp_path):
+    source=tmp_path/"input.png"
+    make_input(source); original=source.read_bytes()
+    completed=invoke("-i",source,"-o",source,cwd=tmp_path)
+    assert completed.returncode!=0
+    assert source.read_bytes()==original
+
+
+# ALPHA EDGES
+def outlined_edge(alpha=1.):
+    source = np.zeros((16, 24, 4), np.float32)
+    source[:, 10:] = [.85, .80, .70, alpha]
+    source[:, 10:12] = [.06, .07, .08, alpha]
+    return source
+
+
+@pytest.mark.parametrize("source_alpha", [1., 253 / 255])
+def test_wrong_grid_does_not_paint_whole_cell_with_off_center_dark_rim(source_alpha):
+    source = outlined_edge(source_alpha)
+    cuts_x, cuts_y = [0, 8, 16, 24], [0, 8, 16]
+    old = recover_cells(source, cuts_x, cuts_y, alpha_mode="coverage")
+    new = recover_cells(source, cuts_x, cuts_y)
+    assert np.all((old.rgba[:, 1, 3] > 0) & (old.rgba[:, 1, 3] < 1))
+    assert np.all(old.rgba[:, 1, 0] > .7)
+    np.testing.assert_allclose(new.rgba[:, 1, :3], [[.85, .80, .70]] * 2, atol=1e-6)
+    np.testing.assert_allclose(new.rgba[:, 1:, 3], source_alpha)
+    assert np.all(new.rgba[:, 0] == 0)
+    np.testing.assert_allclose(new.rgba[:, 2, :3], [[.85, .80, .70]] * 2, atol=1e-6)
+    assert new.structure["alpha_mode"] == "sample"
+    assert new.structure["contour_expansion"] is False
+
+
+def test_thin_opaque_stroke_survives_without_dilating_into_background():
+    source = np.zeros((24, 24, 4), np.float32)
+    source[:, 11:13] = [.1, .1, .1, 1]
+    cells = recover_cells(source, [0, 8, 16, 24], [0, 8, 16, 24])
+    np.testing.assert_array_equal(cells.rgba[:, 1, 3], 1)
+    np.testing.assert_allclose(cells.rgba[:, 1, :3], .1, atol=1e-6)
+    assert np.all(cells.rgba[:, [0, 2]] == 0)
+    assert cells.structure["contour_expansion"] is False
+
+
+def test_faint_source_alpha_is_not_promoted_and_transparent_hole_stays_open():
+    source = np.ones((40, 40, 4), np.float32)
+    source[..., :3] = .15
+    source[16:24, 16:24] = 0
+    source[:8, :8] = [.9, .9, .9, .03]
+    cuts = np.arange(6) * 8
+    cells = recover_cells(source, cuts, cuts)
+    assert cells.structure["alpha_mode"] == "sample"
+    assert cells.rgba[0, 0, 3] == pytest.approx(.03)
+    assert np.all(cells.rgba[2, 2] == 0)
+    assert np.all(cells.rgba[1, :, 3] == 1.)
+    binary = recover_cells(source, cuts, cuts, alpha_mode="binary")
+    assert np.all(binary.rgba[0, 0] == 0)
+    assert set(np.unique(binary.rgba[..., 3])) == {0., 1.}
+
+
+def test_one_dark_boundary_outlier_does_not_replace_light_outline():
+    source = outlined_edge()
+    source[:, 10:12, :3] = .85
+    source[3, 10, :3] = 0
+    cells = recover_cells(source, [0, 8, 16, 24], [0, 8, 16])
+    assert np.all(cells.rgba[:, 1, :3] > .6)
+
+
+def test_genuinely_translucent_art_keeps_sampled_transparency_in_auto():
+    source = outlined_edge(.5)
+    old = recover_cells(source, [0, 8, 16, 24], [0, 8, 16], alpha_mode="coverage")
+    new = recover_cells(source, [0, 8, 16, 24], [0, 8, 16])
+    np.testing.assert_array_equal(old.rgba[..., :3], new.rgba[..., :3])
+    assert new.structure["alpha_mode"] == "sample"
+    assert old.rgba[0, 1, 3] == .375
+    assert new.rgba[0, 1, 3] == .5
+    assert new.rgba[0, 2, 3] == .5
+
+
+@pytest.mark.parametrize("mode", ["auto", "binary", "coverage"])
+def test_hidden_rgb_never_changes_alpha_or_contour_color(mode):
+    source = outlined_edge()
+    changed = source.copy()
+    mask = source[..., 3] == 0
+    changed[mask, :3] = np.random.default_rng(13).random((mask.sum(), 3))
+    a = recover_cells(source, [0, 8, 16, 24], [0, 8, 16], alpha_mode=mode)
+    b = recover_cells(changed, [0, 8, 16, 24], [0, 8, 16], alpha_mode=mode)
+    np.testing.assert_array_equal(a.rgba, b.rgba)
+
+
+def test_api_default_and_explicit_coverage_are_distinct_and_repeatable():
+    source = Image.fromarray(np.rint(outlined_edge() * 255).astype(np.uint8))
+    config = Config(target_size=(3, 2))
+    a, b = pixelize(source, config), pixelize(source, config)
+    np.testing.assert_array_equal(np.asarray(a.image), np.asarray(b.image))
+    assert set(np.unique(np.asarray(a.image)[..., 3])) == {0, 255}
+    soft = pixelize(source, Config(target_size=(3, 2), alpha_mode="coverage"))
+    assert np.any((np.asarray(soft.image)[..., 3] > 0) & (np.asarray(soft.image)[..., 3] < 255))
+
+
+def test_invalid_alpha_mode():
+    with pytest.raises(ValueError, match="alpha_mode"):
+        Config(alpha_mode="unknown")
+    with pytest.raises(ValueError, match="alpha_mode"):
+        recover_cells(outlined_edge(), [0, 24], [0, 16], alpha_mode="unknown")
+
+
+def test_explicit_binary_mode_also_applies_when_no_grid_exists():
+    source = Image.new("RGBA", (13, 11), (30, 40, 50, 180))
+    result = pixelize(source, Config(alpha_mode="binary"))
+    assert result.diagnostics["fallback"]
+    assert result.image.size == source.size
+    assert np.all(np.asarray(result.image)[..., 3] == 255)
+    preserved = pixelize(source, Config(alpha_mode="coverage"))
+    np.testing.assert_array_equal(np.asarray(preserved.image), np.asarray(source))

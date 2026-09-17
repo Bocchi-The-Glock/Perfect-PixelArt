@@ -66,10 +66,13 @@ def to_pil(rgba: np.ndarray, has_alpha: bool = True) -> Image.Image:
     return Image.fromarray(a if has_alpha else a[..., :3])
 
 
-def save_result(result, path, scale: int = 1) -> None:
-    """Save native resolution unless explicit nearest-neighbor scale is given."""
+def save_result(result, path, scale: int = 1, debug_dir=None) -> None:
+    """Save PNG (optionally nearest-neighbour scaled) and its diagnostic bundle."""
     if isinstance(scale, bool) or not isinstance(scale, int) or not 1 <= scale <= 64:
         raise ValueError("scale must be an integer from 1 to 64")
+    from time import perf_counter
+    from .diagnostics import write_debug
+    started = perf_counter()
     path = Path(path)
     if path.suffix.lower() != ".png":
         raise ValueError("output must have a .png extension")
@@ -78,3 +81,6 @@ def save_result(result, path, scale: int = 1) -> None:
         im = im.resize((im.width * scale, im.height * scale), Image.Resampling.NEAREST)
     path.parent.mkdir(parents=True, exist_ok=True)
     im.save(path, format="PNG")
+    result.timings["save_png"] = perf_counter() - started
+    directory = Path(debug_dir) if debug_dir is not None else path.with_name(path.stem + "_debug")
+    write_debug(result, directory=directory, export_path=path, export_scale=scale)

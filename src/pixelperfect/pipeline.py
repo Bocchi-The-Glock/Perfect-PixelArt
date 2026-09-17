@@ -1,0 +1,92 @@
+"""Fast single-grid pipeline; the Python API has no filesystem side effects."""
+from dataclasses import dataclass, field
+from time import perf_counter
+import numpy as np
+from PIL import Image
+from .config import Config
+from .image_io import load_image, to_pil
+from .features import extract_features
+from .grid import detect_grid
+from .sampling import recover_cells, CellResult, _resolve_alpha_mode
+from .palette import quantize_cells
+
+
+@dataclass
+class PixelizeResult:
+    image: Image.Image
+    grid: dict
+    confidence: float
+    timings: dict
+    diagnostics: dict
+    cell_confidence: np.ndarray = field(repr=False)
+    debug_data: dict = field(default_factory=dict, repr=False)
+
+
+def pixelize(image, config=None):
+    """Return a native image; config.scale affects export only."""
+    config = Config() if config is None else config
+    if not isinstance(config, Config):
+        raise TypeError("config must be a Config instance")
+    start = perf_counter()
+    data = load_image(image)
+    rgba = data.rgba
+    h, w = rgba.shape[:2]
+    if config.target_size:
+        tw, th = config.target_size
+        if tw > w or th > h:
+            raise ValueError("target_size cannot exceed input dimensions")
+        if config.square and abs(w / tw - h / th) > 1e-8:
+            raise ValueError("square mode requires equal source spacings")
+        if abs(w / tw - h / th) > max(1 / tw, 1 / th) + 1e-8:
+            raise ValueError("target_size aspect ratio conflicts with input")
+    timings = {"read_preprocess": perf_counter() - start}
+    t = perf_counter()
+    features = extract_features(rgba)
+    timings["fft_edges"] = perf_counter() - t
+    t = perf_counter()
+    chosen, search = detect_grid(features, rgba.shape, config)
+    timings["grid_detection"] = perf_counter() - t
+    t = perf_counter()
+    warnings = []
+    if chosen is None:
+        cells = CellResult(rgba.copy(), np.zeros((h, w), np.float32))
+        alpha_mode, near_opaque = _resolve_alpha_mode(rgba[..., 3], config.alpha_mode)
+        cells.structure.update(alpha_mode_requested=config.alpha_mode, alpha_mode=alpha_mode,
+                               source_near_opaque_fraction=near_opaque)
+        if alpha_mode == "binary":
+            cells.rgba[..., 3] = rgba[..., 3] >= .5
+            cells.rgba[cells.rgba[..., 3] == 0, :3] = 0
+        grid = dict(sx=1., sy=1., phase_x=0., phase_y=0., x_lines=list(range(w + 1)),
+                    y_lines=list(range(h + 1)), warped=False, source="no evidence")
+        confidence = 0.
+        warnings.append("No reliable grid evidence; preserved original dimensions (low confidence).")
+    else:
+        cells = recover_cells(rgba, chosen.x_lines, chosen.y_lines, config.sampling,
+                              alpha_mode=config.alpha_mode)
+        grid = dict(sx=chosen.sx, sy=chosen.sy, phase_x=chosen.phase_x, phase_y=chosen.phase_y,
+                    x_lines=np.rint(chosen.x_lines).astype(int).tolist(),
+                    y_lines=np.rint(chosen.y_lines).astype(int).tolist(),
+                    warped=chosen.warped, source=chosen.metadata["source"])
+        confidence = chosen.support
+        if confidence < config.confidence_threshold:
+            warnings.append("Low heuristic grid confidence; check the grid overlay.")
+    timings["sampling"] = perf_counter() - t
+    t = perf_counter()
+    if config.colors is not None:
+        cells = quantize_cells(cells, config.colors)
+    timings["palette"] = perf_counter() - t
+    output = to_pil(cells.rgba, data.has_alpha)
+    grid.update(output_size=list(output.size), input_size=[w, h], fallback=chosen is None,
+                coverage="full input; integer half-open source boxes",
+                median_cell_width=float(np.median(np.diff(grid["x_lines"]))),
+                median_cell_height=float(np.median(np.diff(grid["y_lines"]))))
+    debug = dict(source=to_pil(rgba, True), spectrum=features.spectrum,
+                 edge_x=features.gradient_x, edge_y=features.gradient_y,
+                 profile_x=features.profile_x, profile_y=features.profile_y,
+                 curvature_x=features.curvature_x, curvature_y=features.curvature_y)
+    timings["total"] = perf_counter() - start
+    return PixelizeResult(output, grid, confidence, timings,
+                          dict(warnings=warnings, fallback=chosen is None,
+                               confidence_kind="uncalibrated heuristic score", grid_search=search,
+                               structure=cells.structure, selected_score=search.get("selected_score")),
+                          cells.confidence, debug)

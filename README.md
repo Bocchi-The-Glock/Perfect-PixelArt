@@ -1,219 +1,206 @@
-# PixelPerfect Plus
+# PixelPerfect Plus 0.3.0
 
-用传统图像处理将 AI 生成的伪像素画恢复为原生低分辨率 PNG。项目从零实现，未复制或导入相邻 `perfectPixel-main` 项目的代码。运行不需要 OpenCV、神经网络、远程 API 或自定义编译扩展。
+将伪像素画恢复为原生低分辨率 PNG。运行依赖仅 **NumPy、Pillow**；pytest 只用于测试。不需要 SciPy、OpenCV、Matplotlib 或网络服务。
 
-这是一个待验证的工程算法：恢复结果是对输入网格的解释，不保证存在唯一的原始像素图。程序提供未经概率校准的**启发式置信分数**；缺少有效证据时保留原尺寸，并通过 stderr 说明情况。
+本版首先改进网格识别，撤回 0.2.1 的整格描黑、轮廓补实规则。算法独立实现；对比脚本直接调用未修改的 perfectPixel-main 公开入口，由原项目选择后端，没有复制其算法代码。
 
-## 目录
+## 运行
 
-顶层有三个功能目录，源码放在 `source`，不是旧项目的副本：
+在本项目目录执行：
+
+```powershell
+python -m pip install -e .
+python pixelperfect.py -i .\input\hollow-knight-sprite.png
+```
+
+已有 NumPy、Pillow 时，可以直接运行第二条命令。仍只需 `-i`：结果写入本项目的 `output/<输入名>.png`，同名结果会更新。JPEG 等输入也导出同名 PNG；不同目录的同名输入需要用 `-o` 区分。安装后的独立 wheel 默认使用工作目录的 output。
+
+每次命令行导出，同时生成：
 
 ```text
-perfect_pixel_plus/
-  input/                     # 生成的合成输入；也可放自己的图片
-  output/                    # 示例 PNG 与显式运行评估得到的报告
-  source/
-    pixelperfect/            # 独立 Python 包
-    tests/                   # pytest 测试
-    evaluate.py              # 合成评估与性能测量
-  pixelperfect.py            # 直接运行入口
-  pyproject.toml
-  README.md
+output/
+  hollow-knight-sprite.png
+  hollow-knight-sprite_debug/
+    fft.png        原分辨率二维 FFT 的对数幅度；红线是最终间距的倒数频率
+    edges.png      RGB + alpha 边缘；红色为 X 差分，绿色为 Y 差分
+    grid.png       最终实际切割线
+    profiles.png   横纵边缘投影及其 FFT
+    curvature.png  插值斜率变化证据；红线是格子中心
+    info.json      候选、分数、采用的证据模型、网格、透明度策略和耗时
+    info.txt       最终尺寸、间距、起点等摘要
 ```
 
-## 安装与快速使用
+输出默认保存原生小图；仅显式指定 `--scale` 时做整数倍最近邻放大。诊断图可能缩小显示，但检测始终使用原分辨率证据。PNG 保留透明通道，诊断图的灰色背景只用于显示。
 
-需要 Python 3.10 或更高版本。运行依赖只有 NumPy、SciPy、Pillow；测试使用 pytest。SciPy 提供信号处理、稀疏覆盖矩阵与小范围数值优化，Pillow 负责方向修正及 PNG 读写。
+## 主要参数
 
-```powershell
-cd D:\Learn\Program\python\PixelArt\perfect_pixel_plus
-python -m pip install -e ".[test]"
-python pixelperfect.py -i input/synthetic/clean_integer.png -o output/restored.png --verbose
+| 参数 | 行为 |
+|---|---|
+| `-i` / `--input` | 必填，静态输入图片 |
+| `-o` / `--output` | 可选，指定结果 PNG 路径 |
+| `--pixel-size 8` 或 `7.5x8` | 固定横纵源图格距，仍估计起点 |
+| `--target-size 64x64` | 精确输出指定尺寸，全幅均分；与 pixel-size 互斥 |
+| `--sampling robust` | 默认，中心优先并检查孤立噪点 |
+| `--sampling center` | 直接取中心，不做异常检查 |
+| `--sampling median` | 内部采样点中值，用于噪声和取色对照 |
+| `--alpha-mode auto` | 默认，保留所选样本的 alpha，不自动二值化 |
+| `--alpha-mode coverage` | 使用格内实际面积平均 alpha |
+| `--alpha-mode binary` | 显式将采样 alpha 按 0.5 阈值二值化；不补描边 |
+| `--local-warp auto/off` | 默认 auto，只对少数候选吸附局部边界 |
+| `--min-pixel-size / --max-pixel-size` | 自动搜索范围，默认 2～64，按图像尺寸裁剪 |
+| `--square` | 强制相同横纵名义格距 |
+| `--colors 32` | 可选低分辨率调色板量化，默认不限色、不抖动 |
+| `--scale 4` | 整数倍最近邻导出，默认 1 |
+| `--debug-dir` | 改变诊断目录，不关闭诊断 |
+| `--verbose` | 打印阶段耗时 |
+
+target-size 不允许超过输入尺寸；宽高比冲突超过一个源像素舍入误差时明确报错，不静默裁剪或拉伸。修正 EXIF 方向，拒绝损坏、无效尺寸和多帧输入。
+
+## 算法概要（0.3.0，本次未改动）
+
+### 1. 先区分颜色边界和插值节点
+
+旧检测器会把双线性缩放产生的宽缓坡上的量化起伏当成多条边缘，因此常选到半倍格距。
+
+现在有两种受约束的证据模型：
+
+- **颜色边界模型**：对预乘 RGB 和 alpha 取方向差分；合并没有明显谷底的近等高峰，避免一条宽边缘重复投票。
+- **线性插值模型**：在最多 64 条原分辨率横、纵扫描线上计算二阶颜色差分。双线性插值的斜率变化发生在原始像素的中心，须减去半个格距才能得到边界，不能直接拿来切格子。
+
+仅当两个方向的“二阶变化总量 / 一阶变化总量”都小于 0.65 时，尝试第二种模型；它还必须满足网格支持分数至少 0.65、两个方向边缘解释度至少 0.75，且比边界模型高至少 0.08。该模型保持规则格线，不用局部漂移掩盖错误。用户给 target-size 时不启用它。
+
+这里的阈值是工程参数，不是已经校准的概率。诊断保留两个模型的候选和选择原因。
+
+### 2. FFT 提供候选，格距和起点一起验证
+
+一次二维实数 FFT 复用于检测和诊断。图像频谱谷、边缘投影 FFT、可见边缘间距提出有限候选，并显式比较半倍和两倍尺度。
+
+每个候选先估计起点，再计算：
+
+```text
+0.48 × 单位边缘间距支持
++ 0.42 × 扣除偶然对齐后的边缘解释度
++ 0.10 × 边缘投影周期强度
 ```
 
-安装后也可以运行：
+分数在一维证据上计算；不为每个候选重建整张图。单位间距支持抑制无依据的过细网格，缺失的同色边界不要求补齐。相关证据不能当成独立概率相乘。
 
-```powershell
-pixelperfect -i input/synthetic/clean_integer.png -o output/restored.png
-python -m pixelperfect -i input/synthetic/clean_integer.png -o output/restored.png
-```
+默认接近方形；只有两个方向都存在强规则证据、格距比不超过 1.12 时，才允许自动选择轻微不同的横纵间距。显式 pixel-size 可指定矩形格子。
 
-命令默认只写指定的一张 PNG，不创建报告或预览图。输出是原生低分辨率图；`--scale 4` 才会在保存时使用整数最近邻放大，绝不使用双线性插值放大。
+仅排名前三的候选尝试局部边缘吸附，每步范围为格距的 ±24%。强规则网格不做这项调整。递推偏移可能累积；不支持任意二维弯曲或透视。
 
-```powershell
-python pixelperfect.py -i input/synthetic/clean_integer.png -o output/fixed.png --pixel-size 8
-python pixelperfect.py -i input/synthetic/clean_integer.png -o output/target.png --target-size 24x24
-python pixelperfect.py -i input/synthetic/clean_integer.png -o output/palette.png --colors 16
-python pixelperfect.py -i input/synthetic/clean_integer.png -o output/preview.png --scale 4
-python pixelperfect.py -i input/synthetic/clean_integer.png -o output/debugged.png --debug-dir output/debug --verbose
-```
+### 3. robust 改为“中心优先，有证据才拒绝”
 
-附带 `input/synthetic/clean_integer.png` 是 24×24 真值经 8 倍最近邻放大的输入，上述命令可直接运行。自己的输入应使用与其成比例的目标尺寸。
+每格最多取 5×5 个内部点，并检查中心附近的 3×3 源像素：
 
-## 参数与默认行为
+- 中心有至少两个相似邻近样本支持时，直接保留中心值，不再平均整个多数颜色簇。
+- 孤立中心异常与多数颜色明显不同、且没有邻近支持时，才回退到可见样本中值。
+- 连续细线、2×2 高光等有局部支持的中心细节可以保留；不统一删除孤立输出像素。
+- 预乘颜色与 alpha 联合用于一致性检查，完全透明像素的隐藏 RGB 不参与判断。
+- 很小的源格子不做中心异常剔除，避免把原生细节当成噪点。
 
-| 参数 | 默认值 | 含义 |
-|---|---|---|
-| `-i, --input` | 必填 | 常见静态图片，支持 PNG/JPEG、RGB/RGBA及可转换模式 |
-| `-o, --output` | 必填 | 输出必须以 `.png` 结尾，不能与输入同路径 |
-| `--pixel-size` | 自动 | 源图像素间距，例如 `8` 或 `8x9`，可以是小数；仍优化起点 |
-| `--target-size` | 自动 | 精确输出宽高，例如 `64x64`；与 pixel-size 互斥 |
-| `--colors` | 不量化 | 1–256 个可见 RGB 颜色上限；不添加抖动 |
-| `--scale` | 1 | 1–64 整数倍最近邻导出，原生结果尺寸不变 |
-| `--sampling` | robust | robust、center、median；后两者作为对照 |
-| `--local-warp` | auto | auto 或 off；限制为两组一维切割线 |
-| `--min-pixel-size` | 2 | 自动搜索最小源图间距 |
-| `--max-pixel-size` | 64 | 自动搜索最大源图间距，还会按输入尺寸裁剪 |
-| `--square` | 关闭 | 要求横纵名义间距相等；默认只施加接近方形的软偏好 |
-| `--debug-dir` | 不写 | 显式保存候选 JSON、网格图、格子置信图、重建图 |
-| `--verbose` | 关闭 | 向 stderr 输出主要阶段耗时与结果尺寸 |
+中心邻域检查允许八邻域局部支持，但不做连通分量合并。没有全局四/八连通拓扑修复。
 
-### 目标尺寸和图像边缘
+默认 alpha 跟随采样：源 alpha=253 就保留 253，不因为主体接近不透明便强制改成 255；透明中心也不会因偏在格子边上的黑线而变成整格黑块。coverage 模式仍可用于面积平均对照，二值化只由显式 binary 参数触发。
 
-- `target-size` 的两个值必须是正整数，且不能超过输入尺寸。放大请使用 `scale`。
-- 目标尺寸模式不裁剪、不拉伸输入；纵横缩放间距只允许原图约一像素取整量级的差异。超过此误差的宽高比冲突直接报错，退出码为 2。
-- 同时开启 `--square` 时更严格：要求目标尺寸对应的横纵名义间距完全相等。
-- 目标尺寸模式固定切割线数量，边界固定为 `0, W` 和 `0, H`；内部起点平移受限于名义间距的 ±30%。因此输出尺寸严格等于指定值。
-- 自动或 pixel-size 模式覆盖完整输入。两端小于名义格宽/高 20% 的残片合并到邻格；其余部分格子保留。不会丢弃任何输入面积。
-- 每格的覆盖范围由相邻 `x_lines` 与 `y_lines` 唯一决定，坐标对应源图像素方框 `[x,x+1)×[y,y+1)`，不是像素中心。
-- 不进行旧式的“差一行就增删一行凑正方形”处理。
+### 4. 边缘覆盖、回退和量化
 
-### 透明度
+源图全幅覆盖；小于 0.2 格距的边缘残片并入相邻格。名义格距可非整数，最终切线通过 NumPy rint 舍入到整数源边界，每格保存实际半开区间。target-size 的精确数量优先。
 
-完全透明的隐藏 RGB 会清零，不参与梯度、取色、调色板或误差评分。轮廓证据含 alpha 变化。检测副本和重建的轻微模糊使用预乘 alpha，避免隐藏黑色污染边缘。
+没有可靠证据时保留原尺寸，输出低置信度提示和诊断，不交互阻塞。启发式置信分数不能解释为正确概率。
 
-robust 和 median 的每格 alpha 是按真实覆盖面积计算的平均值。全透明格始终透明，可见格的 RGB 只从可见输入估计；中心采样对照模式使用中心 alpha。输出保留 RGBA，调色板量化不改变 alpha，也不为全透明格分配颜色预算。
-
-一个输出像素不能同时表示格内所有透明与不透明形状：不足一格的小透明孔可能变为半透明覆盖，无法承诺保留任意亚格结构。明显的整格孔洞已有测试。
+指定 colors 时只对可见低分辨率 RGB 做 Pillow median-cut，透明区域不占无意义的颜色预算。调色板太小仍可能损失高光。当前快速实现不做复杂全图重建评分、全局结构优化或神经网络推理。
 
 ## Python API
 
 ```python
-from PIL import Image
 from pixelperfect import Config, pixelize, save_result
 
-result = pixelize(Image.open("input/synthetic/clean_integer.png"), Config(
-    sampling="robust",
-    local_warp="auto",
-    # pixel_size=8,             # 或 target_size=(64, 64)，二者互斥
-    # colors=32,
-))
-save_result(result, "output/api.png")
-# 显式放大时：save_result(result, "output/api_4x.png", scale=4)
-print(result.image.size, result.confidence)
-print(result.grid["x_lines"], result.timings)
+result = pixelize("input/ritsu.png", Config())
+print(result.image.size, result.grid, result.confidence, result.timings)
+save_result(result, "output/ritsu.png")  # 同时生成诊断
 ```
 
-`pixelize` 也接受图片路径、`uint8` RGB/RGBA 数组或取值在 `[0,1]` 的浮点数组。会拒绝 NaN、无效形状和其他整数类型，避免猜测颜色范围。Pillow 路径会修正 EXIF 方向；动画输入被拒绝。颜色计算使用标准化编码 sRGB 欧氏距离，不声称是感知均匀的 ΔE；未做 ICC 色彩管理或线性光照恢复。
+pixelize 本身不写文件；返回原生图片、实际切割线、启发式置信分数、诊断与耗时。Config.scale 只影响导出尺寸。
 
-返回 `PixelizeResult`：
-
-- `image`：Pillow 图像，**始终为原生低分辨率**；Config.scale 仅供 CLI 保存使用。
-- `grid`：间距、起点、实际切割线、输出尺寸、漂移状态和候选元信息。
-- `confidence`：0–1 启发式分数，不是正确概率。
-- `cell_confidence`：每格颜色恢复的启发式可信度。
-- `timings`：各阶段墙钟耗时（秒），含总时间。
-- `diagnostics`：各候选分项得分、选择原因、警告、结构检查。
-
-API 不写文件、不依赖命令行，也不会交互询问。低置信警告放在 diagnostics，由 CLI 输出到 stderr。
-
-## 算法与模块
-
-| 模块 | 实现 |
-|---|---|
-| `image_io.py` | EXIF、RGB/RGBA 标准化、数值检查、PNG/最近邻导出 |
-| `features.py` | 原分辨率颜色与 alpha 梯度，最多 6 条带，限幅与等权投影 |
-| `grid.py` | 有限周期候选、起点搜索、快速筛选、可选一维动态规划漂移 |
-| `sampling.py` | 覆盖面积、稳健取色、center/median 对照和四邻域结构检查 |
-| `palette.py` | 低分辨率上确定性、置信度与边缘加权的有限调色板 |
-| `scoring.py` | 分数像素覆盖重建、受限模糊、误差/结构/复杂度评分 |
-| `pipeline.py` | 串联、计时、选择候选、置信度与回退 |
-| `diagnostics.py` | 显式诊断导出，无绘图库依赖 |
-
-### 1. 候选与起点
-
-检测副本仅用 sigma=0.45 源像素的轻度高斯平滑，原图和原始梯度保留用于验证。所有间距在原始坐标估计，没有先随意缩图。条带限制局部强纹理贡献，平坦或透明条带不参与投票。
-
-从边缘投影的 FFT、自相关和间距直方图产生候选，包含半倍、两倍、±0.25 像素邻近值；FFT 与自相关来自同一信号，只作为同一证据族。最多对 3 个领先尺度做连续微调，每次最多 14 次目标评估。每个方向最多保留 6 个尺度。
-
-每个尺度搜索起点，使用截断平方的边缘到网格距离损失，并检查多个条带的一致性。不会要求每条线有可见边缘。最多组合 36 对，快速排序后默认最多 4 个进入后续处理；保留主候选的可用半倍/两倍解释，不让附近小数候选挤满列表。全部快速筛选分数与保留情况记录在元信息中。
-
-完整评分还使用安全下界筛选：由于 J 的各项非负，当某候选的 `0.045 × 格子数 / 输入面积` 已大于现有最佳总分时，无须继续取色重建。诊断标记 `pruned_lower_bound`，记录下界，真实总分保留为 null，不伪造尚未计算的误差。置信间隔仅利用保守下界，不把淘汰的竞争者忽略掉。RGB 取色梯度在候选之间复用。
-
-### 2. 漂移模型
-
-只处理 `x[k]`、`y[j]` 两组全局切线。移动范围不超过 min(3 源像素, 18% 名义间距)，要求至少两个有效条带支持移动。动态规划同时考虑边缘收益、位置偏移与相邻间距代价，保持严格单调和完整覆盖；证据增益不超过复杂度门槛时不移动。
-
-这不支持任意二维弯曲、旋转、透视或局部不同网格方向，也不是精确恢复模型。
-
-### 3. 颜色、细线与量化
-
-默认每格最多 128 个确定性空间分层 RGB 样本，结合覆盖面积、alpha、位置和局部梯度降权。alpha 使用该格完整覆盖统计，不抽样。近单色区域直接恢复代表色；混色格用低成本分桶初始化最多 3 个颜色簇，最多 4 轮更新，并保留少量备选色及空间证据。中心位置不能单独决定结果。不计算全样本两两距离。近单色格按最多 512 格一批向量化处理，复杂格保留逐格聚类；整数/分数切线与透明/不透明输入均测试了与标量参考的一致性。
-
-结构规则统一使用**四邻域**；对角接触不视为连接。仅做一轮保守修正：颜色在格内至少有 8% 可见支持、呈细长形状，且两端邻格有同色证据时，允许提升次要色以接续直线。紧凑、多采样点支持、明显比背景亮且与四邻域背景一致的次要簇，也可作为高光保留；单个中心热噪点不会满足这条规则。记录明显透明孔和孤立细节，将它们标记给可选量化。没有无条件清除孤立像素的规则，也没有语义推理。紧凑成簇噪声仍可能被误认作高光。
-
-量化只在恢复后网格上执行，最多 8192 个训练格、10 轮更新；考虑 alpha、置信度、局部边缘和稀有颜色。最多保留 `min(K//4, 8)` 个显著细节颜色作为固定中心，透明格不占 RGB 预算。颜色预算很小时仍可能合并细节，这会计入诊断，不保证任意 K 都能保持全部颜色关系。
-
-### 4. 重建与评分
-
-通过稀疏的一维像素/格子面积重叠矩阵，在**实际切割线**上重建预乘 RGBA。边缘部分格按实际可见面积计算；不会把不规则网格误当均匀最近邻放大。
-
-比较无模糊与 sigma=0.5 源像素高斯模糊两个退化模型；模糊另加 0.0004 代价，不能任意增加模糊解释错误网格。
-
-采用**越小越好**的代价（等价于最大化负代价的质量分数）：
+## 测试：仅保留两个入口
 
 ```text
-J = D + blur_penalty + 0.045 R + 0.035 E_structure + 0.020 E_grid
+src/
+  compare_programs.py         唯一的 Plus / main 对比脚本
+  tests/test_pixelperfect.py  唯一的普通 pytest 文件
+  pixelperfect/              核心算法，本次没有修改
 ```
 
-- `D`：黑/白背景复合颜色与 alpha 的 Huber 类稳健误差，按全部输入像素面积归一化；隐藏 RGB 不影响它。
-- `R`：输出格数/输入面积，加可见颜色表达和横纵邻域颜色变化次数的代理代价。不同尺寸使用同一个输入面积分母，过细网格必须支付更多代价。
-- `E_structure`：有输入支持的强边缘在重建中丢失的比例，允许 1 源像素定位误差；包括 alpha 边缘。结合前述格级线/孔/点检查，但不构成严格拓扑等价证明。
-- `E_grid`：归一化边缘解释误差与漂移惩罚。
+原来的 pattern 生成器、benchmark、独立评估/报告脚本和对应产物已删除。普通回归合并到一个文件，覆盖网格、取色、透明度、输入输出、CLI 和对比输入一致性。其小数组与临时图片只用于功能回归，不生成图案评测数据集。
 
-复杂度项是工程代理，不是严格最优编码长度；包含空间变化，不只是直方图熵；不以 PNG 文件大小判断质量。各候选使用相同颜色预算与同一套权重，不能直接跨不同 `--colors` 运行比较裸颜色误差。权重尚未通过大规模数据校准。
-
-### 5. 置信与回退
-
-置信综合有效边缘支持、条带一致性、前两候选差距、重建质量和是否触及搜索边界。高重建质量不能弥补没有边缘证据的情况。
-
-自动低置信时，从与最优得分相近（绝对差≤0.006）的候选中选择格子较多者，减少激进降采样。完全缺少双向有效周期证据则保留原尺寸并返回 0 分，输出仍正常生成。提供间距/目标约束时即使低置信也完成约束下输出。手动指定的格子尺寸不因此被宣称正确。
-
-## 测试与合成评估
+### 普通回归
 
 ```powershell
-python -m pytest
-python source/evaluate.py
+python -m pip install -e ".[test]"
+python -m pytest -q
 ```
 
-评估脚本显式生成 input 内的素材、output 内的恢复结果及 `output/evaluation/` 中的 JSON/Markdown 报告，包括一次 1024×1024 自动处理计时。这是独立评估命令，不是普通 CLI 的默认副作用。
+pytest 是测试依赖，不是运行图片处理所必需的依赖。
 
-在本次受限环境中，pytest 安装在项目内 `source/.test_deps`，也可使用以下命令复现，无需改全局 Python：
+### 直接对比真实图片
 
 ```powershell
-$env:PYTHONPATH = "source;source/.test_deps"
-python -m pytest
+python src/compare_programs.py
+python src/compare_programs.py -i .\input\hollow-knight-sprite.png
 ```
 
-测试覆盖干净网格尺寸/起点、半倍与两倍候选、分数覆盖、中心噪点、整格细线/高光/透明孔、隐藏 RGB 不变性、目标尺寸/最近邻、确定性、损坏文件、EXIF、纯色与小图、CLI 参数和默认只保存结果图。非整数缩放、模糊、压缩、缺失边界、重复纹理和漂移另外作为质量探针，不把“生成了有效 PNG”写成“正确恢复了唯一真值”。
+不带 -i 时处理 input 中的实际图片。对比脚本：
 
-实测环境、分项耗时、采样对照和失败案例见 [评估报告](output/evaluation/EVALUATION.md)。测试没有下载图像，也没有用旧项目效果图充当新算法结果。
+1. 先修正原图 EXIF 方向，按 alpha 合成到纯白背景，保存一张供两者共同使用的 RGB PNG，不缩放输入。
+2. **Plus**：启动现有 `python pixelperfect.py -i 共同白底文件 -o 结果路径`。
+3. **main**：导入原项目公开入口，调用 `get_perfect_pixel(rgb)`，传入共同白底文件对应的相同 RGB 像素，所有算法参数采用原代码默认值。
+4. 网格大小、起点和切割线全部由各自代码决定；脚本不提供外部格距、目标尺寸或调参配置。
+5. 对比图使用纯白背景，左右两列使用相同的整数最近邻倍数。不会对算法输出执行去光晕、抠图或描边。
 
-### 本次验证记录（2026-09-16）
+不能直接丢弃原图 alpha：完全透明像素可能存有黑色或带光晕的隐藏 RGB，丢弃 alpha 会将它们变成可见颜色。这里用 `alpha × RGB + (1-alpha) × 白色` 处理，两者接收同一份可见颜色。半透明像素正常混合，不强制变实。本对比评估白底 RGB 输入，不评估透明通道恢复；直接运行 Plus 处理原始 RGBA 时仍保留其正常透明流程。
 
-- 89 项自动化测试通过；wheel 实际构建并安装到临时项目内目录，已用安装后的 `python -m pixelperfect` 完成 PNG 导出，随后清理安装检查副本。
-- Windows 11、Python 3.12.11、NumPy 1.26.4、SciPy 1.16.2、Pillow 12.1.0；系统报告 20 个逻辑 CPU，具体 CPU 型号未取得。
-- 1024×1024 合成输入自动恢复成 64×64：一次预热进程内实测 3.770 秒，不含磁盘读写，RGB/alpha MAE 均为 0。优化前同工作区另一次记录为 20.845 秒；非受控多次统计实验，不宣称稳定倍数或实时。
-- 10 个自动探针有 9 个输出尺寸与生成真值一致；尺寸一致不等于内容完全正确。双线性非整数缩放案例保留原尺寸、置信为 0，仍列在报告中。
-- 模糊＋JPEG、固定目标网格的 RGB MAE（0–255）：center 5.979，median 5.556，robust 2.732；中心噪点案例分别为 125.142、0、0。
+这里比较的是同一白底输入经过各程序正常流程的结果。白底合成会改变边缘证据，因此网格可能与直接运行原始 RGBA 时不同。当前环境没有 OpenCV，main 公开入口会按原项目规则回退 NumPy；实际后端记录在图上和 JSON 中。有 OpenCV 时，后端也由原项目自己选择。
 
-## 已知限制
+输出：
 
-1. 大片同色、重复纹理、极少边界可能存在多个同样合理的格数。启发式置信未校准，仍可能判断错误。
-2. 半倍/两倍候选参与比较，但有限候选预算仍可能遗漏正确尺度；触及默认 2–64 搜索边界时应按输入调整范围。
-3. 只支持全局水平/竖直网格及有限一维漂移；不处理任意二维弯曲、透视、旋转网格或多个独立尺度。
-4. RGB 代表色为近似统计，源图细节已丢失时不能重造。小于一格的眼睛、高光或透明孔可能被合并。
-5. 结构代价主要是边缘与局部四邻域代理；不是语义识别，也不保证所有连通性或孔洞拓扑。
-6. 抽样、候选数和迭代数有上限；大幅模糊、强压缩与连续渐变可能让模型失配。复杂混色格比干净格更慢。
-7. 大图会保留原始数组、梯度和候选重建，内存随输入面积增长。没有宣称实时、没有 GPU 路径。
-8. 首版仅单张静态图；无 GUI、批处理、动画、精灵表分割或自动透视校正。
+- [comparison.png](output/comparison.png)：**左列 perfectPixel-main，右列 PixelPerfect Plus**。
+- [comparison.json](output/comparison.json)：调用命令、后端、返回尺寸、Plus 原程序给出的实际格线，以及错误信息。
+- [comparison_native](output/comparison_native)：input_white/ 共同白底输入、main/ 和 plus/ 原生 PNG、每张图的 8 倍对比图；Plus 同时保留正常诊断包。JSON 记录共同输入路径及 RGB 像素 SHA256。
+
+真实 AI 图片没有已知原始网格，不额外编造分数或准确率。原生输出保持各程序生成的尺寸，显示放大只作用于对比图。
+
+## 目录与局限
+
+### src/pixelperfect 模块说明
+
+当前共 10 个 Python 文件、约 909 行（含空行和注释）。这些模块全部有调用用途，没有可以直接删除的闲置模块。本次只调整目录名与引用路径，未改动核心代码。
+
+| 文件 | 作用 | 保留与简化建议 |
+|---|---|---|
+| `__init__.py` | 导出 Config、pixelize、PixelizeResult、save_result 和版本号 | 保留，只有 7 行，是 Python API 入口。 |
+| `__main__.py` | 命令行参数、默认输出目录、错误处理、运行摘要 | 保留，支持命令行和安装后的入口。参数解析与 Config 校验各有职责，不宜一起删除。 |
+| `config.py` | 统一保存参数，验证范围、类型与互斥约束 | 保留，CLI 和 API 共用，避免无效参数进入算法。 |
+| `pipeline.py` | 串联读取、特征、网格、取色、量化；处理回退、计时和结果对象 | 保留，是 pixelize 的实现。可将回退结果构造抽成小函数，减少分支负担。 |
+| `image_io.py` | 读取路径/Pillow/数组，EXIF 修正，处理 alpha，导出 PNG 和诊断 | 保留。Pillow 输入分支中 EXIF 转置执行两次，可在保留现有测试的前提下合并成一次。 |
+| `features.py` | RGB/alpha 方向梯度、投影、二维 FFT、插值曲率证据 | 保留，是网格检测和诊断的共同输入。不能只保留灰度边缘，否则可能漏掉颜色边界。 |
+| `grid.py` | 候选间距、半倍/两倍比较、起点搜索、评分、有限漂移和插值模型选择 | 保留，是决定格子大小的核心。可复用重复构造的规则格线及候选起点评分，不能直接删候选验证分支。 |
+| `sampling.py` | center/median/robust 取色，中心邻域支持检查，alpha 策略和格子置信度 | 保留。可拆出 alpha 应用的小函数；仅需运行摘要的不透明比例统计可按需计算，保留 API 诊断兼容性。 |
+| `palette.py` | 指定 --colors 时对可见颜色做无抖动量化 | 默认不执行，但由 pipeline 导入。只有 22 行，可合并到 sampling.py；直接删除会破坏导入和 --colors 功能，合并本身不会明显提速。 |
+| `diagnostics.py` | 输出 FFT、边缘、网格、投影、曲率图及 JSON/TXT 信息 | 按当前每次生成诊断的要求必须保留。可清理未使用参数并复用投影 FFT。 |
+
+可优先简化的具体位置：
+
+- `diagnostics.write_debug` 的 `original` 参数没有被函数使用，当前调用也不传它；可移除，但需确认外部调用兼容性。
+- `grid._axis` 返回字典中的 `trough` 没有下游读取；可移除这个返回字段。局部 trough 的计算仍用于产生候选，不能连同计算一起删除。
+- `grid._detect_grid` 在判断 warped 时对同一组参数重复调用 `make_lines`；可缓存规则切割线。
+- `grid._axis` 已算过投影 FFT，`diagnostics.write_debug` 又为作图重算；可复用中间结果，不过一维 FFT 的节省预计有限，需测量确认。
+- `image_io.load_image` 的 Pillow 分支重复修正 EXIF，合并能省一次复制。需要保持现有内存 EXIF 测试通过。
+
+`PixelizeResult.cell_confidence` 虽然没有参与最终网格选择，也没有独立导出置信度图，仍属于 API 返回信息；它不是完全无用的变量。`source_near_opaque_fraction` 目前只做诊断，已经不用于强制边缘变实。
+
+文件合并主要减少文件数量，不等于算法提速。优先避免重复数组计算和图像复制；FFT、边缘识别、候选验证以及稳健取色都应保留。若只想减少一个小模块，可考虑合并 palette.py，当前没有必要把全部实现挤进一个文件。
+
+业务目录为 input、output、src。运行依赖仍只有 NumPy 和 Pillow；测试另需 pytest。`src/pixelperfect` 是当前实现，`src/tests/test_pixelperfect.py` 是唯一的普通测试文件，`src/compare_programs.py` 是唯一的程序对比脚本。
+
+仍不能保证任意 AI 图有唯一原始网格。重复纹理、严重模糊、任意二维漂移和偏离中心的极小细节仍可能导致误判。当前插值分支只检验受限的线性插值证据。请结合实际网格叠加图判断。
