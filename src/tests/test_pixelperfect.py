@@ -1069,7 +1069,40 @@ def test_explicit_binary_mode_also_applies_when_no_grid_exists():
     np.testing.assert_array_equal(np.asarray(preserved.image), np.asarray(source))
 
 
-# NATIVE-RESOLUTION REGRESSIONS: no filenames, metadata, size cutoff or color hints.
+# Meaningful procedural evaluation scenes (no downloads).
+def continuous_scene(seed=0, size=(768, 576), transparent=False):
+    """Continuous-tone illustrated landscape with curves, windows and thin rails."""
+    from PIL import ImageDraw
+    w, h = size
+    y, x = np.mgrid[:h, :w].astype(np.float32)
+    x /= w; y /= h
+    sky = np.stack((155 + 50*y + 10*x, 198 + 22*y, 238 - 18*y + 3*x), axis=-1)
+    image = Image.fromarray(np.uint8(np.clip(sky, 0, 255))).convert('RGBA')
+    if transparent:
+        image = Image.new('RGBA', size)
+    draw = ImageDraw.Draw(image)
+    def box(coords):
+        return tuple(int(v * (w if i % 2 == 0 else h)) for i, v in enumerate(coords))
+    draw.ellipse(box((.74, .08, .87, .25)), fill=(255, 224, 128))
+    draw.polygon([box(p) for p in [(0,.70),(.22,.30),(.46,.72),(.67,.37),(1,.73),(1,1),(0,1)]], fill=(76,121,103))
+    draw.rectangle(box((.31,.51,.68,.90)), fill=(224,187,132))
+    draw.polygon([box(p) for p in [(.27,.52),(.48,.28),(.72,.52)]], fill=(154,68,55))
+    rng = np.random.default_rng(seed)
+    for row in [.58,.73]:
+        for col in [.35,.45,.55,.63]:
+            draw.rectangle(box((col,row,col+.035,row+.09)), fill=(32,49,69))
+            draw.line(box((col+.006,row+.012,col+.025,row+.012)), fill=(248,236,190), width=max(1,w//512))
+    for col in [.07,.14,.77,.89,.96]:
+        height = rng.uniform(.55,.73)
+        draw.line(box((col,height,col,.94)), fill=(65,53,45), width=max(2,w//120))
+        draw.ellipse(box((col-.045,height-.13,col+.045,height+.06)), fill=(47,102,76))
+    image = image.filter(ImageFilter.GaussianBlur(max(.7, w/850)))
+    pixels = np.array(image)
+    shade = 8*np.sin(x*6 + seed*.31) + 6*np.cos(y*9 + x*3)
+    pixels[...,:3] = np.uint8(np.clip(pixels[...,:3].astype(float) + shade[...,None], 0,255))
+    return Image.fromarray(pixels) if transparent else Image.fromarray(pixels[...,:3])
+
+
 def native_scene(seed=0):
     from PIL import ImageDraw
     rng = np.random.default_rng(seed)
@@ -1163,3 +1196,167 @@ def test_native_preservation_still_allows_color_postprocessing_and_export(tmp_pa
     info = json.loads((tmp_path/'debug/native/info.json').read_text(encoding='utf-8'))
     assert info['grid']['native_preserved']
     assert info['diagnostics']['grid_search']['native_resolution']['selected']
+
+
+# ORDINARY-IMAGE RENDERING: keep the original recovery path for pixel evidence.
+@pytest.mark.parametrize('seed,size', [(0, (768, 576)), (7, (576, 768)), (18, (1024, 1024))])
+def test_ordinary_scene_gets_a_conservative_generated_grid(seed, size):
+    image = continuous_scene(seed, size)
+    result = pixelize(image)
+    previous = pixelize(image, Config(photo_mode='off'))
+    assert result.grid['stylized'] and not result.grid['fallback']
+    assert result.confidence == 0  # Rendering size is not evidence of an original grid.
+    assert max(result.image.size) == min(256, max(96, round(max(size) / 4)))
+    assert min(result.image.size) >= 96
+    if not previous.grid['fallback']:
+        assert all(a >= b for a, b in zip(result.image.size, previous.image.size))
+    assert result.grid['x_lines'][0] == result.grid['y_lines'][0] == 0
+    assert result.grid['x_lines'][-1] == size[0]
+    assert result.grid['y_lines'][-1] == size[1]
+    assert min(np.diff(result.grid['x_lines'])) >= 1
+    assert min(np.diff(result.grid['y_lines'])) >= 1
+    assert result.diagnostics['structure']['averaged_smooth_cells'] > 0
+    assert result.diagnostics['grid_search']['image_routing']['applied']
+    assert 'not a detected' in result.diagnostics['warnings'][0]
+    np.testing.assert_array_equal(pixelize(image).image, result.image)
+
+
+@pytest.mark.parametrize('degradation', ['nearest', 'blur', 'jpeg', 'bilinear', 'noninteger', 'cropped'])
+def test_large_degraded_pixel_art_keeps_existing_recovery(degradation):
+    native = native_scene(18)
+    image = enlarged(native, 12)
+    if degradation == 'blur':
+        image = image.filter(ImageFilter.GaussianBlur(.8))
+    elif degradation == 'jpeg':
+        buffer = io.BytesIO()
+        image.convert('RGB').save(buffer, format='JPEG', quality=85)
+        buffer.seek(0)
+        image = Image.open(buffer)
+    elif degradation == 'bilinear':
+        image = native.resize(image.size, Image.Resampling.BILINEAR)
+    elif degradation == 'noninteger':
+        image = native.resize((811, 690), Image.Resampling.NEAREST)
+    elif degradation == 'cropped':
+        image = image.crop((5, 7, image.width - 3, image.height - 4)).filter(ImageFilter.GaussianBlur(.6))
+    result = pixelize(image)
+    previous = pixelize(image, Config(photo_mode='off'))
+    assert not result.grid['stylized']
+    assert result.image.size == previous.image.size
+    assert 65 <= result.image.width <= 69 and 55 <= result.image.height <= 59
+    np.testing.assert_array_equal(result.image, previous.image)
+
+
+def test_ordinary_budget_cannot_coarsen_an_existing_grid():
+    from dataclasses import replace
+    from pixelperfect.grid import GridCandidate
+    from pixelperfect.natural import route_image
+    rgba = load_image(continuous_scene()).rgba
+    features = extract_features(rgba)
+    grid = GridCandidate(2., 2., 0., 0., np.arange(0, 769, 2), np.arange(0, 577, 2),
+                         .1, False, {'source': 'weak colour evidence'})
+    chosen, report = route_image(rgba, features, grid, Config())
+    assert chosen is grid and not report['applied']
+    assert 'more detail' in report['reason']
+    # Grid strength in just one direction must not be mistaken for two-axis support.
+    sparse = replace(grid, sx=48., sy=48., x_lines=np.arange(0, 769, 48),
+                     y_lines=np.arange(0, 577, 48),
+                     metadata={'source': 'weak colour evidence', 'axis_metrics': [
+                         {'edge_fit': .99, 'unit_gaps': .8}, {'edge_fit': .2, 'unit_gaps': .05}]})
+    chosen, report = route_image(rgba, features, sparse, Config())
+    assert report['applied'] and chosen.metadata['stylized']
+
+
+@pytest.mark.parametrize('name', ['bocchi.png', 'bocchi2.png', 'chito.png', 'hollow-knight-sprite.png', 'lastTour.png', 'ritsu.png'])
+@pytest.mark.parametrize('degradation', ['blur', 'jpeg', 'noninteger'])
+def test_actual_pseudo_pixel_art_is_not_rerouted_after_degradation(name, degradation):
+    source = Image.open(Path(__file__).resolve().parents[2] / 'input' / name).convert('RGBA')
+    if degradation == 'blur':
+        source = source.filter(ImageFilter.GaussianBlur(.6))
+    elif degradation == 'jpeg':
+        buffer = io.BytesIO()
+        source.convert('RGB').save(buffer, format='JPEG', quality=85)
+        buffer.seek(0)
+        source = Image.open(buffer)
+    else:
+        source = source.resize((round(source.width*1.13), round(source.height*1.13)), Image.Resampling.BILINEAR)
+    current = pixelize(source)
+    previous = pixelize(source, Config(photo_mode='off'))
+    assert not current.grid['stylized']
+    assert current.image.size == previous.image.size
+    np.testing.assert_array_equal(current.image, previous.image)
+
+
+def test_ordinary_sampler_suppresses_smooth_texture_aliasing_but_keeps_thin_line():
+    from pixelperfect.grid import GridCandidate
+    from pixelperfect.natural import render_cells
+    # Low-contrast woven fabric plus a continuous dark seam, not random noise.
+    y, x = np.mgrid[:64, :64]
+    source = np.ones((64, 64, 4), np.float32)
+    source[..., :3] = (.55 + .018 * np.sin(x * 2.1) + .012 * np.cos(y * 1.7))[..., None]
+    source[:, 27:29, :3] = .05
+    cuts = np.arange(0, 65, 8)
+    grid = GridCandidate(8., 8., 0., 0., cuts, cuts, 0., False, {'stylized': True})
+    result = render_cells(source, grid, Config())
+    center = recover_cells(source, cuts, cuts, 'center')
+    truth = source.reshape(8, 8, 8, 8, 4).mean(axis=(1, 3))
+    mask = np.ones((8, 8), bool); mask[:, 3] = False
+    robust_error = np.mean(np.abs(result.rgba[mask, :3] - truth[mask, :3]))
+    center_error = np.mean(np.abs(center.rgba[mask, :3] - truth[mask, :3]))
+    assert robust_error < 1e-6 and robust_error < center_error / 10
+    np.testing.assert_allclose(result.rgba[:, 3, :3], .05, atol=1e-6)
+    np.testing.assert_array_equal(result.rgba[..., 3], 1.)
+
+
+def test_ordinary_rendering_alpha_and_color_postprocessing_stay_separate():
+    image = continuous_scene(7, transparent=True)
+    changed = np.array(image)
+    changed[changed[..., 3] == 0, :3] = [255, 0, 233]
+    result = pixelize(image)
+    assert result.grid['stylized']
+    np.testing.assert_array_equal(result.image, pixelize(changed).image)
+    rgba = np.asarray(result.image)
+    assert np.any(rgba[..., 3] == 0) and np.any(rgba[..., 3] == 255)
+    assert np.all(rgba[rgba[..., 3] == 0, :3] == 0)
+    colored = pixelize(image, Config(colors=16))
+    assert colored.grid == result.grid
+    np.testing.assert_array_equal(colored.native_image, result.image)
+    np.testing.assert_array_equal(colored.image, process_colors(result.image, colors=16).image)
+
+
+def test_small_transparent_subject_is_not_reduced_by_canvas_size():
+    # Large empty canvas with a small softly shaded object: keep its available pixels.
+    canvas = Image.new('RGBA', (1024, 1024))
+    canvas.paste(continuous_scene(0, (120, 90), True), (451, 467))
+    current = pixelize(canvas)
+    previous = pixelize(canvas, Config(photo_mode='off'))
+    assert not current.grid['stylized']
+    np.testing.assert_array_equal(current.image, previous.image)
+
+
+@pytest.mark.parametrize('square', [False, True])
+def test_ordinary_nondivisible_size_covers_complete_input(square):
+    result = pixelize(continuous_scene(0, (771, 579)), Config(square=square))
+    assert result.grid['stylized']
+    assert result.grid['x_lines'][-1] == 771 and result.grid['y_lines'][-1] == 579
+    assert min(np.diff(result.grid['x_lines'])) >= 1 and min(np.diff(result.grid['y_lines'])) >= 1
+    if square:
+        assert result.grid['sx'] == result.grid['sy']
+
+
+def test_cli_ordinary_mode_and_generated_grid_diagnostics(tmp_path):
+    import json
+    source = tmp_path / 'landscape.png'
+    continuous_scene().save(source)
+    result = tmp_path / 'result.png'
+    completed = invoke('-i', source, '-o', result, '--debug', '--debug-dir', tmp_path / 'debug/result', cwd=tmp_path)
+    assert completed.returncode == 0, completed.stderr
+    assert 'ordinary-image' in completed.stderr
+    info = json.loads((tmp_path / 'debug/result/info.json').read_text(encoding='utf-8'))
+    assert info['grid']['stylized'] and info['grid']['output_size'] == [192, 144]
+    assert info['diagnostics']['grid_search']['image_routing']['applied']
+    disabled = invoke('-i', source, '-o', result, '--photo-mode', 'off', cwd=tmp_path)
+    assert disabled.returncode == 0, disabled.stderr
+    with Image.open(result) as output:
+        assert output.size == pixelize(source, Config(photo_mode='off')).image.size
+    with pytest.raises(ValueError, match='photo_mode'):
+        Config(photo_mode='force')

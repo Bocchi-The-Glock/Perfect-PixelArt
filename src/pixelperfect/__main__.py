@@ -22,6 +22,8 @@ def parser():
     p.add_argument("--alpha-mode", choices=("auto", "binary", "coverage"), default="auto",
                    help="auto: sampled alpha; binary: explicit threshold; coverage: averaged alpha")
     p.add_argument("--local-warp", choices=("auto", "off"), default="auto")
+    p.add_argument("--photo-mode", choices=("auto", "off"), default="auto",
+                   help="conservative pixelization for ordinary images; off keeps only grid recovery")
     p.add_argument("--min-pixel-size", type=float, default=2)
     p.add_argument("--max-pixel-size", type=float, default=64)
     p.add_argument("--square", action="store_true", help="require equal nominal x/y spacing")
@@ -39,7 +41,7 @@ def main(argv=None):
     try:
         config = Config(colors=args.colors, palette=args.palette, color_mode=args.color_mode,
                         scale=args.scale, sampling=args.sampling, local_warp=args.local_warp,
-                        alpha_mode=args.alpha_mode,
+                        alpha_mode=args.alpha_mode, photo_mode=args.photo_mode,
                         min_pixel_size=args.min_pixel_size, max_pixel_size=args.max_pixel_size,
                         square=args.square)
         checkout = Path(__file__).resolve().parents[2]

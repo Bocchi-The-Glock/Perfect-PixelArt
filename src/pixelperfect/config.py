@@ -18,6 +18,7 @@ class Config:
     sampling: str = "robust"
     alpha_mode: str = "auto"
     local_warp: str = "auto"
+    photo_mode: str = "auto"
     min_pixel_size: float = 2.0
     max_pixel_size: float = 64.0
     square: bool = False
@@ -32,6 +33,8 @@ class Config:
             raise ValueError("alpha_mode must be auto, binary, or coverage")
         if self.local_warp not in ("auto", "off"):
             raise ValueError("local_warp must be auto or off")
+        if self.photo_mode not in ("auto", "off"):
+            raise ValueError("photo_mode must be auto or off")
         if not (math.isfinite(self.min_pixel_size) and math.isfinite(self.max_pixel_size)
                 and 1 <= self.min_pixel_size <= self.max_pixel_size):
             raise ValueError("scale range must satisfy 1 <= min_pixel_size <= max_pixel_size")

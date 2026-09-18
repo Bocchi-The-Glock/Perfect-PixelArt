@@ -70,10 +70,12 @@ def write_debug(result, original=None, directory=None, export_path=None, export_
     pixels = np.clip((spectrum - low) / max(high - low, 1e-8), 0, 1)
     fft = Image.fromarray(np.rint(pixels * 255).astype(np.uint8)).convert("RGB")
     fft_lines = None
-    if draw_grid:
+    if draw_grid and not result.grid.get('stylized', False):
         fft_lines = ([w // 2 + offset * w / result.grid["sx"] for offset in (-1, 1)],
                      [h // 2 + offset * h / result.grid["sy"] for offset in (-1, 1)])
-    _display(fft, "Image FFT: log(1+|F|); red = selected reciprocal spacing", lines=fft_lines).save(directory / "fft.png")
+    fft_title = ("Image FFT: generated rendering grid; no detected reciprocal spacing" if result.grid.get('stylized', False)
+                 else "Image FFT: log(1+|F|); red = selected reciprocal spacing")
+    _display(fft, fft_title, lines=fft_lines).save(directory / "fft.png")
     ex, ey = debug["edge_x"], debug["edge_y"]
     # Independent x/y derivatives remain visible: x is red, y is green.
     strength = np.maximum(ex, ey)
@@ -101,7 +103,7 @@ def write_debug(result, original=None, directory=None, export_path=None, export_
         power = abs(np.fft.rfft(profile - profile.mean()))
         spacing = result.grid["sx" if i == 0 else "sy"]
         _plot(d, (20, y + 160, 1015, y + 290), power, "#e2c87a", name + " edge-projection FFT",
-              [len(profile) / spacing] if draw_grid else ())
+              [len(profile) / spacing] if draw_grid and not result.grid.get('stylized', False) else ())
     plots.save(directory / "profiles.png")
     knots = Image.new("RGB", (1040, 330), "#20232b")
     kd = ImageDraw.Draw(knots)

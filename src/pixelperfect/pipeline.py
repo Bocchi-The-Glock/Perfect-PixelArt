@@ -9,6 +9,7 @@ from .features import extract_features
 from .grid import detect_grid
 from .sampling import recover_cells, CellResult, _resolve_alpha_mode
 from .palette import process_colors
+from .natural import route_image, render_cells
 
 
 @dataclass
@@ -40,6 +41,11 @@ def pixelize(image, config=None):
     chosen, search = detect_grid(features, rgba.shape, config)
     timings["grid_detection"] = perf_counter() - t
     t = perf_counter()
+    chosen, routing = route_image(rgba, features, chosen, config)
+    search['image_routing'] = routing
+    timings['image_routing'] = perf_counter() - t
+    stylized = chosen is not None and chosen.metadata.get('stylized', False)
+    t = perf_counter()
     warnings = []
     if chosen is None:
         cells = CellResult(rgba.copy(), np.zeros((h, w), np.float32))
@@ -54,14 +60,17 @@ def pixelize(image, config=None):
         confidence = 0.
         warnings.append("No reliable grid evidence; preserved original dimensions (low confidence).")
     else:
-        cells = recover_cells(rgba, chosen.x_lines, chosen.y_lines, config.sampling,
-                              alpha_mode=config.alpha_mode)
+        cells = (render_cells(rgba, chosen, config) if stylized else
+                 recover_cells(rgba, chosen.x_lines, chosen.y_lines, config.sampling,
+                               alpha_mode=config.alpha_mode))
         grid = dict(sx=chosen.sx, sy=chosen.sy, phase_x=chosen.phase_x, phase_y=chosen.phase_y,
                     x_lines=np.rint(chosen.x_lines).astype(int).tolist(),
                     y_lines=np.rint(chosen.y_lines).astype(int).tolist(),
                     warped=chosen.warped, source=chosen.metadata["source"])
         confidence = chosen.support
-        if confidence < config.confidence_threshold:
+        if stylized:
+            warnings.append("Applied conservative ordinary-image pixelization; the rendering grid is generated, not a detected original grid.")
+        elif confidence < config.confidence_threshold:
             warnings.append("Low heuristic grid confidence; check the grid overlay.")
     timings["sampling"] = perf_counter() - t
     t = perf_counter()
@@ -69,7 +78,7 @@ def pixelize(image, config=None):
     colored = process_colors(native, colors=config.colors, palette=config.palette, color_mode=config.color_mode)
     timings["palette"] = perf_counter() - t
     output = colored.image
-    grid.update(output_size=list(output.size), input_size=[w, h], fallback=chosen is None,
+    grid.update(output_size=list(output.size), input_size=[w, h], fallback=chosen is None, stylized=bool(stylized),
                 native_preserved=chosen is not None and chosen.metadata.get('native_preserved', False),
                 coverage="full input; integer half-open source boxes",
                 median_cell_width=float(np.median(np.diff(grid["x_lines"]))),
@@ -82,6 +91,6 @@ def pixelize(image, config=None):
     return PixelizeResult(output, grid, confidence, timings,
                           dict(warnings=warnings, fallback=chosen is None,
                                confidence_kind="uncalibrated heuristic score", grid_search=search,
-                               structure=cells.structure, selected_score=search.get("selected_score"),
+                               structure=cells.structure, selected_score=0. if stylized else search.get("selected_score"),
                                color_processing=colored.diagnostics),
                           cells.confidence, debug, native_image=native)

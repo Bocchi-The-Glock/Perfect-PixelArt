@@ -28,7 +28,8 @@ function renderState() {
   renderColorLimit();
   $('status').textContent = t(status.key, status.values);
   if (result?.meta.grid.native_preserved && status.key === 'done') $('status').textContent = t('nativePreserved');
-  if (result) $('warnings').textContent = t(result.meta.grid.fallback ? 'fallback' : 'lowConfidence');
+  if (result?.meta.grid.stylized && status.key === 'done') $('status').textContent = t('stylized');
+  if (result) $('warnings').textContent = t(result.meta.grid.stylized ? 'stylizedHelp' : result.meta.grid.fallback ? 'fallback' : 'lowConfidence');
   const active = $('diagnostic-tabs').querySelector('.active');
   if (active) $('diagnostic-image').alt = t(active.dataset.i18n);
   for (const option of $('palette').options) {
@@ -258,7 +259,7 @@ function colorConfiguration() {
 function configuration() {
   return { ...defaults, scale: 1, sampling: $('sampling').value, alpha_mode: $('alpha-mode').value,
     local_warp: $('local-warp').value, min_pixel_size: Number($('min-size').value), max_pixel_size: Number($('max-size').value),
-    square: $('square').checked, ...colorConfiguration() };
+    square: $('square').checked, photo_mode: $('photo-mode').checked ? 'auto' : 'off', ...colorConfiguration() };
 }
 function coreConfiguration() {
   const { colors, palette, color_mode, ...core } = configuration(); return core;
@@ -272,7 +273,7 @@ function reset() {
   colorCount = defaults.colors;
   $('use-palette').checked = defaults.palette !== null;
   $('palette').value = defaults.palette || 'DMC436'; $('color-mode').value = defaults.color_mode;
-  $('square').checked = defaults.square; $('scale').value = String(defaults.scale);
+  $('square').checked = defaults.square; $('photo-mode').checked = defaults.photo_mode === 'auto'; $('scale').value = String(defaults.scale);
   visibility();
   if (before !== JSON.stringify(coreConfiguration()) || wasDebug !== $('debug').checked) invalidate();
   else scheduleColors();
