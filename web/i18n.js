@@ -3,6 +3,8 @@ const messages = {
   previews: ['图片预览', 'Image previews'], background: ['预览背景', 'Background'],
   checker: ['透明棋盘', 'Checkerboard'], white: ['纯白', 'White'], darkBackground: ['深色', 'Dark'],
   zoom: ['缩放', 'Zoom'], fit: ['适应窗口', 'Fit'], original: ['原图', 'Original'], restored: ['恢复结果', 'Result'],
+  zoomIn: ['放大', 'Zoom in'], zoomOut: ['缩小', 'Zoom out'], upload: ['上传图片', 'Upload'],
+  fewerColors: ['减少颜色数量', 'Fewer colors'], moreColors: ['增加颜色数量', 'More colors'], keepColorsStop: ['不限制', 'All'],
   choose: ['点击或拖入图片', 'Click or drop an image'], replace: ['点击更换图片，或拖入新图片', 'Click or drop to replace image'],
   sample: ['示例', 'Sample'], remove: ['移除', 'Remove'], waiting: ['等待生成', 'No result yet'],
   generate: ['生成', 'Generate'], generating: ['生成中…', 'Generating…'], cancel: ['取消', 'Cancel'],

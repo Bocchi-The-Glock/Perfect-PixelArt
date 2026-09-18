@@ -29,23 +29,27 @@
       <div class="preview-grid">
         <article class="preview-panel">
           <div class="panel-heading"><h1 data-i18n="original">原图</h1><span id="original-size">—</span></div>
+          <div class="image-viewport">
           <div class="image-stage checker" id="original-stage" role="button" tabindex="0" data-i18n-aria="choose" aria-disabled="false" data-i18n-title="replace">
             <div class="placeholder" id="original-placeholder"><span class="upload-icon" aria-hidden="true">＋</span><strong data-i18n="choose">点击或拖入图片</strong></div>
             <img id="original-image" data-i18n-alt="original" draggable="false" hidden>
           </div>
-          <div class="panel-footer"><span id="original-label">未选择图片</span><div><button id="sample" type="button" class="text-button" data-i18n="sample">示例</button><button id="clear-file" type="button" class="text-button" data-i18n="remove" hidden>移除</button></div></div>
-          <div class="zoom-controls">
-            <label for="original-zoom" data-i18n="zoom">缩放</label><input id="original-zoom" type="range" min="0" max="1000" value="500" step="1" disabled><output id="original-zoom-value" for="original-zoom">—</output><button id="original-fit" type="button" class="text-button" data-i18n="fit">适应窗口</button>
+          <div class="zoom-controls" id="original-zoom-controls" hidden>
+            <button id="original-zoom-out" type="button" class="zoom-step" data-i18n-aria="zoomOut" data-i18n-title="zoomOut" disabled>−</button><output id="original-zoom-value">—</output><button id="original-zoom-in" type="button" class="zoom-step" data-i18n-aria="zoomIn" data-i18n-title="zoomIn" disabled>+</button><button id="original-fit" type="button" class="text-button" data-i18n="fit" disabled>适应窗口</button>
           </div>
-          <div class="panel-actions"><button class="run-button" id="run" type="submit" form="settings" disabled>生成</button><button class="cancel-button" id="cancel" type="button" data-i18n="cancel" hidden>取消</button></div>
+          </div>
+          <div class="panel-footer"><span id="original-label">未选择图片</span><div><button id="sample" type="button" class="text-button" data-i18n="sample">示例</button><button id="clear-file" type="button" class="text-button" data-i18n="remove" hidden>移除</button></div></div>
+          <div class="panel-actions"><button class="upload-button" id="upload" type="button" data-i18n="upload">上传图片</button><button class="run-button" id="run" type="submit" form="settings" disabled>生成</button><button class="cancel-button" id="cancel" type="button" data-i18n="cancel" hidden>取消</button></div>
         </article>
         <article class="preview-panel result-panel">
           <div class="panel-heading"><h2 data-i18n="restored">恢复结果</h2><span id="result-size">—</span></div>
+          <div class="image-viewport">
           <div class="image-stage checker" id="result-stage"><div class="placeholder" id="result-placeholder"><span data-i18n="waiting">等待生成</span></div><img id="result-image" data-i18n-alt="restored" draggable="false" hidden></div>
-          <div class="panel-footer"><span id="result-label">—</span><span>PNG</span></div>
-          <div class="zoom-controls">
-            <label for="result-zoom" data-i18n="zoom">缩放</label><input id="result-zoom" type="range" min="0" max="1000" value="500" step="1" disabled><output id="result-zoom-value" for="result-zoom">—</output><button id="result-fit" type="button" class="text-button" data-i18n="fit">适应窗口</button>
+          <div class="zoom-controls" id="result-zoom-controls" hidden>
+            <button id="result-zoom-out" type="button" class="zoom-step" data-i18n-aria="zoomOut" data-i18n-title="zoomOut" disabled>−</button><output id="result-zoom-value">—</output><button id="result-zoom-in" type="button" class="zoom-step" data-i18n-aria="zoomIn" data-i18n-title="zoomIn" disabled>+</button><button id="result-fit" type="button" class="text-button" data-i18n="fit" disabled>适应窗口</button>
           </div>
+          </div>
+          <div class="panel-footer"><span id="result-label">—</span><span>PNG</span></div>
           <div class="export-settings">
             <label for="scale"><span data-i18n="exportScale">导出倍数</span><output id="scale-value" for="scale">1×</output></label>
             <div class="range-row"><span>1×</span><input id="scale" type="range" min="1" max="16" step="1" value="1"><span>16×</span></div>
@@ -82,10 +86,10 @@
           <div class="section-title"><h2 data-i18n="colorPost">颜色处理（可选）</h2><span id="color-summary" class="field-hint"></span></div>
           <div class="basic-settings">
             <div class="color-limit">
-              <label for="colors"><span data-i18n="colors">限定颜色数量</span><output id="colors-value" for="colors">不限制</output></label>
+              <div class="color-limit-heading"><label for="colors" data-i18n="colors">限定颜色数量</label><span class="color-value"><span class="value-size" data-i18n="keepColors" aria-hidden="true">不限制</span><output id="colors-value" for="colors">不限制</output><span id="color-editor" hidden><button id="colors-decrease" class="color-step" type="button" data-i18n-aria="fewerColors" data-i18n-title="fewerColors">−</button><input id="colors-number" type="number" min="2" max="512" step="1" value="2" data-i18n-aria="colors" disabled><button id="colors-increase" class="color-step" type="button" data-i18n-aria="moreColors" data-i18n-title="moreColors">+</button></span></span></div>
               <div class="color-track">
                 <input id="colors" type="range" min="0" max="1000" step="1" value="0" aria-valuetext="不限制">
-                <div class="color-stops" aria-hidden="true"><span class="unlimited-stop"><i></i><span data-i18n="keepColors">不限制</span></span><span class="minimum-stop"><i></i>2</span><span class="maximum-stop"><i></i><span id="colors-max">512</span></span></div>
+                <div class="color-stops" aria-hidden="true"><span class="unlimited-stop"><i></i><span data-i18n="keepColorsStop">不限制</span></span><span class="minimum-stop"><i></i>2</span><span class="maximum-stop"><i></i><span id="colors-max">512</span></span></div>
               </div>
             </div>
             <label class="check"><input id="use-palette" type="checkbox"><span data-i18n="usePalette">使用色库</span></label>

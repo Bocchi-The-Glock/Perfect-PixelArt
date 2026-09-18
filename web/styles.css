@@ -42,11 +42,12 @@ main > .status-strip, main > .warning-box, main > .diagnostics { grid-column: 2;
 .preview-toolbar label { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .preview-toolbar select { width: auto; margin: 0; height: 30px; font-size: 12px; }
 .preview-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
-.preview-panel { min-width: 0; overflow: hidden; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; display: flex; flex-direction: column; }
+.preview-panel { --preview-gain: 40px; min-width: 0; overflow: hidden; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; display: flex; flex-direction: column; }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; padding: 13px 16px; border-bottom: 1px solid var(--line); gap: 8px; min-height: 46px; }
 .panel-heading h1, .panel-heading h2 { margin: 0; font-size: 14px; font-weight: 600; }
 .panel-heading > span { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.image-stage { height: clamp(280px, 48vh, 600px); overflow: auto; overscroll-behavior: contain; display: flex; position: relative; padding: 12px; }
+.image-viewport { position: relative; flex-shrink: 0; }
+.image-stage { height: calc(clamp(280px, 48vh, 600px) + var(--preview-gain)); overflow: auto; overscroll-behavior: contain; display: flex; position: relative; padding: 12px; }
 .image-stage img { image-rendering: pixelated; display: block; margin: auto; flex-shrink: 0; max-width: none; max-height: none; }
 #original-stage { cursor: pointer; }
 #original-stage:hover { box-shadow: inset 0 0 0 2px var(--line); }
@@ -65,10 +66,9 @@ main > .status-strip, main > .warning-box, main > .diagnostics { grid-column: 2;
 .text-button { border: 0; padding: 2px 0; background: none; color: var(--muted); font-size: 12px; }
 .text-button:hover:not(:disabled) { color: var(--accent); }
 .panel-actions { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; padding: 14px 16px; margin-top: auto; }
-.preview-panel:first-child .panel-actions { position: relative; }
-.preview-panel:first-child .cancel-button { position: absolute; left: calc(50% + 62px); }
-.run-button, .download-button, .secondary-download, .cancel-button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; border-radius: 6px; padding: 0 20px; border: 1px solid var(--line); font-size: 13px; white-space: nowrap; }
+.run-button, .upload-button, .download-button, .secondary-download, .cancel-button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; border-radius: 6px; padding: 0 20px; border: 1px solid var(--line); font-size: 13px; white-space: nowrap; }
 .run-button { min-width: 108px; background: var(--button); border-color: var(--button); color: white; }
+.upload-button { min-width: 108px; background: var(--soft); color: var(--accent); }
 .cancel-button { background: var(--surface); color: var(--error); }
 .download-button { background: var(--soft); color: var(--accent); cursor: pointer; }
 .secondary-download { background: var(--surface); color: var(--muted); }
@@ -98,11 +98,20 @@ summary { font-size: 12px; color: var(--muted); width: fit-content; }
 .export-settings output { font-weight: 600; }
 .range-row { display: flex; align-items: center; gap: 14px; margin-top: 8px; font-size: 11px; color: var(--muted); }
 input[type="range"] { flex: 1; min-width: 0; margin: 0; accent-color: var(--accent); cursor: pointer; height: 24px; }
-.zoom-controls { display: flex; align-items: center; gap: 8px; padding: 8px 16px; min-width: 0; }
-.zoom-controls output { min-width: 42px; text-align: right; font-size: 11px; font-variant-numeric: tabular-nums; }
+.zoom-controls { position: absolute; top: 8px; right: 8px; z-index: 2; display: flex; align-items: center; gap: 4px; padding: 3px 5px; max-width: calc(100% - 16px); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+.zoom-controls output { min-width: 42px; text-align: center; font-size: 11px; font-variant-numeric: tabular-nums; }
 .zoom-controls button { white-space: nowrap; }
-.zoom-controls input { width: 0; }
-.color-limit > label { display: flex; justify-content: space-between; gap: 8px; }
+.zoom-controls .text-button { padding-inline: 4px; }
+.zoom-step { width: 24px; height: 24px; padding: 0; flex-shrink: 0; border: 0; border-radius: 4px; background: transparent; color: var(--text); font-size: 16px; }
+.zoom-step:hover:not(:disabled), .color-step:hover:not(:disabled) { background: var(--soft); }
+.color-limit-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); line-height: 16px; height: 16px; }
+.color-value { position: relative; flex: none; height: 16px; }
+.value-size { visibility: hidden; }
+.color-value output, #color-editor { position: absolute; inset: 0; text-align: right; }
+#color-editor { left: -28px; display: flex; align-items: center; gap: 2px; }
+#colors-number { flex: 1; width: 0; height: 16px; margin: 0; padding: 0; border: 0; border-radius: 0; font: inherit; line-height: 16px; text-align: center; color: var(--text); background: transparent; appearance: textfield; }
+#colors-number::-webkit-inner-spin-button, #colors-number::-webkit-outer-spin-button { appearance: none; margin: 0; }
+.color-step { flex: 0 0 12px; width: 12px; height: 16px; padding: 0; border: 0; background: transparent; font: inherit; line-height: 16px; color: var(--text); }
 .color-limit output { color: var(--text); font-variant-numeric: tabular-nums; }
 .color-track { position: relative; padding-bottom: 23px; margin-top: 8px; }
 .color-track::before { content: ""; position: absolute; top: 10px; left: 8px; right: 8px; height: 4px; background: var(--line); border-radius: 2px; }
@@ -115,7 +124,7 @@ input[type="range"] { flex: 1; min-width: 0; margin: 0; accent-color: var(--acce
 .color-stops > span { position: absolute; top: 8px; display: flex; flex-direction: column; align-items: center; gap: 9px; white-space: nowrap; }
 .color-stops i { width: 8px; height: 8px; border: 1px solid var(--muted); background: var(--surface); border-radius: 50%; }
 .unlimited-stop { left: 0; transform: translateX(-4px); align-items: flex-start !important; }
-.minimum-stop { left: 24%; transform: translateX(-50%); }
+.minimum-stop { left: 20%; transform: translateX(-50%); }
 .maximum-stop { right: -4px; align-items: flex-end !important; }
 .status-strip { display: flex; align-items: center; gap: 8px; padding: 12px 2px; font-size: 12px; line-height: 1.6; color: var(--muted); }
 .status-icon { display: inline-block; }
@@ -132,9 +141,8 @@ input[type="range"] { flex: 1; min-width: 0; margin: 0; accent-color: var(--acce
 @media (max-width: 1050px) {
   main { grid-template-columns: 220px minmax(0, 1fr); column-gap: 12px; padding-inline: 14px; }
   .controls { padding: 15px 12px; }
-  .zoom-controls { flex-wrap: wrap; padding-inline: 10px; gap: 6px; }
-  .zoom-controls input { min-width: 50px; }
-  .zoom-controls label { width: 100%; }
+  .preview-panel { --preview-gain: 62px; }
+  .run-button, .upload-button { min-width: 92px; padding-inline: 8px; }
 }
 @media (max-width: 760px) {
   .topbar { height: 54px; padding: 0 12px; gap: 6px; }
@@ -145,7 +153,8 @@ input[type="range"] { flex: 1; min-width: 0; margin: 0; accent-color: var(--acce
   .preview-toolbar { gap: 10px; }
   .preview-toolbar label { font-size: 11px; gap: 5px; }
   .preview-grid { gap: 10px; }
-  .image-stage { height: clamp(220px, 34vh, 320px); padding: 6px; }
+  .preview-panel { --preview-gain: 83px; }
+  .image-stage { height: calc(clamp(220px, 34vh, 320px) + var(--preview-gain)); padding: 6px; }
   .panel-heading { padding: 9px; flex-wrap: wrap; min-height: 58px; align-content: center; gap: 3px; }
   .panel-heading h1, .panel-heading h2 { font-size: 13px; width: 100%; }
   .panel-heading > span { font-size: 10px; }
@@ -159,11 +168,12 @@ input[type="range"] { flex: 1; min-width: 0; margin: 0; accent-color: var(--acce
   .controls { padding: 15px 13px; margin-top: 16px; }
   .basic-settings { grid-template-columns: 1fr; gap: 13px; }
   .panel-actions { padding: 4px 9px 10px; gap: 6px; }
-  .run-button, .download-button, .secondary-download, .cancel-button { padding: 0 10px; font-size: 12px; }
-  .run-button { min-width: 80px; }
-  .preview-panel:first-child .cancel-button { position: static; }
-  .zoom-controls { padding: 8px; gap: 4px; }
-  .zoom-controls button { width: 100%; text-align: right; }
+  .run-button, .upload-button, .download-button, .secondary-download, .cancel-button { padding: 0 10px; font-size: 12px; }
+  .run-button, .upload-button { width: min(80px, calc((100% - 6px) / 2)); min-width: 0; padding-inline: 2px; }
+  .zoom-controls { top: 5px; right: 5px; max-width: calc(100% - 10px); flex-wrap: wrap; justify-content: flex-end; gap: 1px; padding: 2px; }
+  .zoom-controls output { min-width: 35px; font-size: 10px; }
+  .zoom-controls .text-button { font-size: 10px; }
+  .zoom-step { width: 20px; }
   .export-settings { padding: 10px 9px 0; }
   .range-row { gap: 6px; }
 }
