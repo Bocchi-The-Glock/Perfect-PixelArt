@@ -1,0 +1,107 @@
+{
+  "version": "0.3.0",
+  "pyodide": "0.26.4",
+  "defaults": {
+    "colors": null,
+    "palette": null,
+    "color_mode": "natural",
+    "scale": 1,
+    "sampling": "robust",
+    "alpha_mode": "auto",
+    "local_warp": "auto",
+    "min_pixel_size": 2.0,
+    "max_pixel_size": 64.0,
+    "square": false,
+    "confidence_threshold": 0.45
+  },
+  "palettes": [
+    {
+      "id": "DMC436",
+      "name": "拼豆-DMC-436色",
+      "brand": "DMC",
+      "nominal_size": 436,
+      "entries": 436,
+      "unique_colors": 436
+    },
+    {
+      "id": "MARD24",
+      "name": "拼豆-MARD-24色",
+      "brand": "MARD",
+      "nominal_size": 24,
+      "entries": 24,
+      "unique_colors": 24
+    },
+    {
+      "id": "MARD48",
+      "name": "拼豆-MARD-48色",
+      "brand": "MARD",
+      "nominal_size": 48,
+      "entries": 48,
+      "unique_colors": 48
+    },
+    {
+      "id": "MARD72",
+      "name": "拼豆-MARD-72色",
+      "brand": "MARD",
+      "nominal_size": 72,
+      "entries": 72,
+      "unique_colors": 72
+    },
+    {
+      "id": "MARD96",
+      "name": "拼豆-MARD-96色",
+      "brand": "MARD",
+      "nominal_size": 96,
+      "entries": 96,
+      "unique_colors": 96
+    },
+    {
+      "id": "MARD120",
+      "name": "拼豆-MARD-120色",
+      "brand": "MARD",
+      "nominal_size": 120,
+      "entries": 120,
+      "unique_colors": 120
+    },
+    {
+      "id": "MARD144",
+      "name": "拼豆-MARD-144色",
+      "brand": "MARD",
+      "nominal_size": 144,
+      "entries": 144,
+      "unique_colors": 144
+    },
+    {
+      "id": "MARD221",
+      "name": "拼豆-MARD-221色",
+      "brand": "MARD",
+      "nominal_size": 221,
+      "entries": 221,
+      "unique_colors": 221
+    },
+    {
+      "id": "MARD280",
+      "name": "拼豆-MARD-280色",
+      "brand": "MARD",
+      "nominal_size": 280,
+      "entries": 275,
+      "unique_colors": 275
+    }
+  ],
+  "bundle_sha256": "09e2af49f41dbf553c25fa8e7c253854f1c32e8bf06aeb70991ffce2dd36cd83",
+  "files": {
+    "pixelperfect/__init__.py": "de190a42208ff8d9e06558be0baea9fda3f2891b0427c509d1cb27f114a5f2c5",
+    "pixelperfect/__main__.py": "fc1604eb44731c6ef7c377588acfac4b34e1044c03c5ae7021d6110c0bc74ab2",
+    "pixelperfect/color_math.py": "ab735d2728ff0db7623d69f8d75dbcc407f04c903f946ed9bd029d64a45b883c",
+    "pixelperfect/config.py": "c1037f6e11d9c5d50def97e8a1a911da90155de299f7049badae738f5a8ec3ed",
+    "pixelperfect/diagnostics.py": "225232de9dd0f65722588886870b817da4584c0a41f264a0f8afd2e024096512",
+    "pixelperfect/features.py": "6118cbb730bf90265af8bf2ad881a742b090fb0dc5676cfc1a109aafb75ad13d",
+    "pixelperfect/grid.py": "e9a8a965c7643169164df5f40c1319d70598d4db051ed1d93444457e90a2c88d",
+    "pixelperfect/image_io.py": "e175ab9f364ceff032c1621393d574dfedfbd2222dddea53a4fe7a78e0cba423",
+    "pixelperfect/palette.py": "bca4613883f76c83a8a4fb4610f332511b416f9eaf6bd0e350069bc1e3937cd7",
+    "pixelperfect/pipeline.py": "23b2c94fd162ca3c3c8220fd86b8a02ef6150be6fadf121c4d9bfa452e910e41",
+    "pixelperfect/sampling.py": "b3e416d851a48027485f044674af99851e31b66ab7d1d16a060ea9aca85f5b65",
+    "pixelperfect/palettes.json": "d44788e6515ca7daffb7cdfb396dbd32b53a0c7f2247dbfecf9c5188667ddd89",
+    "web_bridge.py": "819a9a2b7154700c9d904921f3878a1c876c3804746beb251dd3a73141b9dad9"
+  }
+}

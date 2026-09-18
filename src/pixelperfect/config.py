@@ -1,13 +1,19 @@
 """Validated, immutable configuration shared by the CLI and Python API."""
 from dataclasses import dataclass
 import math
+from .palette import validate_color_options
+
+
+def validate_scale(scale):
+    if isinstance(scale, bool) or not isinstance(scale, int) or not 1 <= scale <= 16:
+        raise ValueError("scale must be an integer from 1 to 16")
 
 
 @dataclass(frozen=True)
 class Config:
-    pixel_size: float | tuple[float, float] | None = None
-    target_size: tuple[int, int] | None = None
     colors: int | None = None
+    palette: str | None = None
+    color_mode: str = "natural"
     scale: int = 1
     sampling: str = "robust"
     alpha_mode: str = "auto"
@@ -18,25 +24,8 @@ class Config:
     confidence_threshold: float = 0.45
 
     def __post_init__(self):
-        if self.pixel_size is not None and self.target_size is not None:
-            raise ValueError("pixel_size and target_size are mutually exclusive")
-        if self.pixel_size is not None:
-            sizes = ((self.pixel_size, self.pixel_size) if isinstance(self.pixel_size, (int, float))
-                     else tuple(self.pixel_size))
-            if len(sizes) != 2 or not all(math.isfinite(float(s)) and float(s) >= 1 for s in sizes):
-                raise ValueError("pixel_size must contain two finite spacings >= 1")
-            object.__setattr__(self, "pixel_size", tuple(float(s) for s in sizes))
-            if self.square and abs(sizes[0] - sizes[1]) > 1e-8:
-                raise ValueError("square mode requires equal pixel spacings")
-        if self.target_size is not None:
-            sizes = tuple(self.target_size)
-            if len(sizes) != 2 or any(isinstance(s, bool) or not isinstance(s, int) or s < 1 for s in sizes):
-                raise ValueError("target_size must be a positive integer (width, height)")
-            object.__setattr__(self, "target_size", sizes)
-        if self.colors is not None and (isinstance(self.colors, bool) or not isinstance(self.colors, int) or not 1 <= self.colors <= 256):
-            raise ValueError("colors must be an integer from 1 to 256")
-        if isinstance(self.scale, bool) or not isinstance(self.scale, int) or not 1 <= self.scale <= 64:
-            raise ValueError("scale must be an integer from 1 to 64")
+        validate_color_options(self.colors, self.palette, self.color_mode)
+        validate_scale(self.scale)
         if self.sampling not in ("robust", "center", "median"):
             raise ValueError("sampling must be robust, center, or median")
         if self.alpha_mode not in ("auto", "binary", "coverage"):

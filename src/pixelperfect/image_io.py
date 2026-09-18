@@ -4,6 +4,7 @@ from pathlib import Path
 import warnings
 import numpy as np
 from PIL import Image, ImageOps, UnidentifiedImageError
+from .config import validate_scale
 
 
 @dataclass
@@ -66,21 +67,30 @@ def to_pil(rgba: np.ndarray, has_alpha: bool = True) -> Image.Image:
     return Image.fromarray(a if has_alpha else a[..., :3])
 
 
-def save_result(result, path, scale: int = 1, debug_dir=None) -> None:
-    """Save PNG (optionally nearest-neighbour scaled) and its diagnostic bundle."""
-    if isinstance(scale, bool) or not isinstance(scale, int) or not 1 <= scale <= 64:
-        raise ValueError("scale must be an integer from 1 to 64")
-    from time import perf_counter
-    from .diagnostics import write_debug
-    started = perf_counter()
+def export_png(image, path, scale: int = 1) -> None:
+    """Export an already recovered native image; never run grid detection again."""
+    validate_scale(scale)
     path = Path(path)
     if path.suffix.lower() != ".png":
         raise ValueError("output must have a .png extension")
-    im = result.image
     if scale != 1:
-        im = im.resize((im.width * scale, im.height * scale), Image.Resampling.NEAREST)
+        image = image.resize((image.width * scale, image.height * scale), Image.Resampling.NEAREST)
     path.parent.mkdir(parents=True, exist_ok=True)
-    im.save(path, format="PNG")
+    image.save(path, format="PNG")
+
+
+def save_result(result, path, scale: int = 1, debug_dir=None, *, debug=False) -> None:
+    """Save PNG; write diagnostics only when debug=True."""
+    if debug_dir is not None and not debug:
+        raise ValueError("debug_dir requires debug=True")
+    from time import perf_counter
+    started = perf_counter()
+    path = Path(path)
+    export_png(result.image, path, scale)
     result.timings["save_png"] = perf_counter() - started
-    directory = Path(debug_dir) if debug_dir is not None else path.with_name(path.stem + "_debug")
-    write_debug(result, directory=directory, export_path=path, export_scale=scale)
+    result.timings.pop("debug_images", None)
+    result.timings["total_with_export"] = result.timings["total"] + result.timings["save_png"]
+    if debug:
+        from .diagnostics import write_debug
+        directory = Path(debug_dir) if debug_dir is not None else path.parent / "debug" / path.stem
+        write_debug(result, directory=directory, export_path=path, export_scale=scale)

@@ -1,0 +1,345 @@
+import { t, translate, setLanguage, language, preference } from './i18n.js';
+
+const $ = id => document.getElementById(id);
+let file = null, worker = null, busy = false, operation = '', generation = 0, defaults = null;
+let result = null, stale = false, urls = [], originalUrl = null, downloadUrl = null, previewUnavailable = false;
+let palettes = [], colorTimer = null, colorDirty = false;
+let colorCount = null, colorMaximum = 512, colorRevision = 0, pendingColorRevision = 0;
+const colorMinimumStop = 240; // Give Unlimited and 2 distinct, reachable stops.
+const views = { original: { factor: null }, result: { factor: null } };
+let status = { key: 'selectImage', kind: '', values: {} };
+let theme = preference('pp-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+
+function renderTheme() {
+  document.documentElement.dataset.theme = theme;
+  document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#101112' : '#f6f7f5';
+  $('theme-toggle').title = t(theme === 'dark' ? 'day' : 'night');
+  $('theme-toggle').setAttribute('aria-label', $('theme-toggle').title);
+  $('theme-toggle').setAttribute('aria-pressed', String(theme === 'dark'));
+  $('language-toggle').title = language === 'zh' ? 'Switch to English' : '切换中文';
+  $('language-toggle').setAttribute('aria-label', $('language-toggle').title);
+  $('language-label').textContent = language === 'zh' ? 'EN' : '中';
+}
+function renderState() {
+  $('run').textContent = t(busy && operation === 'process' ? 'generating' : 'generate');
+  $('original-label').textContent = file?.name || t('noFile');
+  $('original-placeholder').querySelector('strong').textContent = t(previewUnavailable ? 'previewLater' : 'choose');
+  $('scale-value').textContent = `${$('scale').value}×`;
+  renderColorLimit();
+  $('result-label').textContent = !result ? '—' : stale ? t('stale') : t('exportSize', {
+    size: result.meta.grid.output_size.map(n => n * Number($('scale').value)).join(' × '),
+  });
+  $('status').textContent = t(status.key, status.values);
+  if (result?.meta.grid.native_preserved && status.key === 'done') $('status').textContent = t('nativePreserved');
+  if (result) $('warnings').textContent = t(result.meta.grid.fallback ? 'fallback' : 'lowConfidence');
+  const active = $('diagnostic-tabs').querySelector('.active');
+  if (active) $('diagnostic-image').alt = t(active.dataset.i18n);
+  for (const option of $('palette').options) {
+    const item = palettes.find(p => p.id === option.value);
+    if (item) option.textContent = t('paletteName', { brand: item.brand, size: item.nominal_size });
+  }
+  const library = palettes.find(p => p.id === $('palette').value);
+  $('palette-note').hidden = !$('use-palette').checked || !library || library.nominal_size === library.unique_colors;
+  if (library) $('palette-note').textContent = t('paletteNote', { nominal: library.nominal_size, actual: library.unique_colors });
+  const colorInfo = result?.meta.color_processing;
+  $('color-summary').textContent = colorInfo?.applied ? t('colorCount', {
+    count: colorInfo.output_colors, seconds: (result.colorSeconds ?? result.meta.timings.palette).toFixed(2) }) : '';
+  renderTheme();
+}
+function setStatus(key, kind = '', values = {}) {
+  status = { key, kind, values };
+  $('status').parentElement.className = `status-strip ${kind}`;
+  $('status-icon').textContent = kind === 'busy' ? '◌' : kind === 'error' ? '!' : '○';
+  renderState();
+}
+function setBusy(value, kind = '') {
+  busy = value; operation = kind;
+  $('settings-fields').disabled = value;
+  $('color-fields').disabled = value && kind !== 'recolor';
+  $('run').disabled = value || !file || !defaults;
+  $('original-stage').setAttribute('aria-disabled', String(value));
+  $('original-stage').classList.remove('dragover');
+  $('sample').disabled = value; $('clear-file').disabled = value;
+  $('cancel').hidden = !value;
+  $('scale').disabled = value && kind === 'export';
+  $('download').disabled = value || !result || stale || colorDirty;
+  $('download').setAttribute('aria-disabled', String($('download').disabled));
+  $('download-debug').hidden = !result?.meta.debug || stale || colorDirty || value;
+  renderState();
+}
+function invalidate() {
+  clearTimeout(colorTimer);
+  if (!result) return;
+  stale = true; $('download-debug').hidden = true; $('diagnostics').hidden = true;
+  setBusy(false); setStatus('staleStatus');
+}
+function clearResult() {
+  clearTimeout(colorTimer); colorDirty = false;
+  for (const url of urls) URL.revokeObjectURL(url);
+  if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+  urls = []; downloadUrl = null; result = null; stale = false;
+  $('result-image').removeAttribute('src'); $('result-image').hidden = true;
+  $('result-placeholder').hidden = false; $('result-summary').hidden = true; $('warnings').hidden = true;
+  $('diagnostics').hidden = true; $('download-debug').hidden = true;
+  $('diagnostic-tabs').replaceChildren(); $('diagnostic-image').removeAttribute('src');
+  $('download-debug').removeAttribute('href'); $('result-size').textContent = '—';
+  views.result.factor = null; refreshZoom();
+  setBusy(false);
+}
+async function useFile(next) {
+  if (busy || !next) return;
+  if (next.size > 64 * 1024 * 1024) { setStatus('largeFile', 'error'); return; }
+  file = next; generation++; clearResult(); previewUnavailable = false;
+  views.original.factor = null;
+  if (originalUrl) URL.revokeObjectURL(originalUrl);
+  originalUrl = URL.createObjectURL(file);
+  $('clear-file').hidden = false;
+  $('original-image').hidden = false; $('original-placeholder').hidden = true;
+  $('original-image').src = originalUrl; $('original-size').textContent = '—';
+  setStatus('ready');
+}
+function zoomBounds(name) {
+  const image = $(`${name}-image`), stage = $(`${name}-stage`), padding = getComputedStyle(stage);
+  const padX = parseFloat(padding.paddingLeft) + parseFloat(padding.paddingRight);
+  const padY = parseFloat(padding.paddingTop) + parseFloat(padding.paddingBottom);
+  let fit = Math.max(.0001, Math.min((stage.clientWidth - padX) / image.naturalWidth,
+    (stage.clientHeight - padY) / image.naturalHeight));
+  if (name === 'result' && fit >= 1) fit = Math.floor(fit);
+  if (name === 'original') fit = Math.min(1, fit);
+  return { fit, min: Math.min(.01, fit / 4), max: Math.max(32, fit * 4) };
+}
+function renderZoom(name) {
+  const image = $(`${name}-image`), stage = $(`${name}-stage`), slider = $(`${name}-zoom`);
+  slider.disabled = image.hidden || !image.naturalWidth;
+  if (slider.disabled) { $(`${name}-zoom-value`).textContent = '—'; return; }
+  const bounds = zoomBounds(name), factor = views[name].factor ?? bounds.fit;
+  image.style.width = `${Math.max(1, image.naturalWidth * factor)}px`;
+  image.style.height = `${Math.max(1, image.naturalHeight * factor)}px`;
+  slider.value = String(Math.round(1000 * Math.log(factor / bounds.min) / Math.log(bounds.max / bounds.min)));
+  const text = `${Number((factor * 100).toFixed(1))}%`;
+  slider.setAttribute('aria-valuetext', text); $(`${name}-zoom-value`).textContent = text;
+}
+function setZoom(name, factor, point = null) {
+  const image = $(`${name}-image`), stage = $(`${name}-stage`);
+  if (image.hidden || !image.naturalWidth) return;
+  const bounds = zoomBounds(name), rect = image.getBoundingClientRect(), viewport = stage.getBoundingClientRect();
+  const anchor = point || { x: viewport.left + stage.clientWidth / 2, y: viewport.top + stage.clientHeight / 2 };
+  const pixel = { x: (anchor.x - rect.left) / rect.width, y: (anchor.y - rect.top) / rect.height };
+  views[name].factor = factor === null ? null : Math.max(bounds.min, Math.min(bounds.max, factor));
+  renderZoom(name);
+  const next = image.getBoundingClientRect();
+  stage.scrollLeft += next.left + pixel.x * next.width - anchor.x;
+  stage.scrollTop += next.top + pixel.y * next.height - anchor.y;
+  if (factor === null) stage.scrollTo(0, 0);
+}
+function refreshZoom() { for (const name of Object.keys(views)) renderZoom(name); }
+for (const name of Object.keys(views)) {
+  $(`${name}-zoom`).oninput = () => {
+    const { min, max } = zoomBounds(name);
+    setZoom(name, min * (max / min) ** (Number($(`${name}-zoom`).value) / 1000));
+  };
+  $(`${name}-fit`).onclick = () => setZoom(name, null);
+  $(`${name}-stage`).addEventListener('wheel', event => {
+    if ($(`${name}-image`).hidden || !$(`${name}-image`).naturalWidth || !event.deltaY) return;
+    event.preventDefault();
+    const { fit } = zoomBounds(name), delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 200 : 1);
+    setZoom(name, (views[name].factor ?? fit) * Math.exp(-Math.max(-300, Math.min(300, delta)) * .002),
+      { x: event.clientX, y: event.clientY });
+  }, { passive: false });
+}
+$('original-image').onload = () => { $('original-size').textContent = `${$('original-image').naturalWidth} × ${$('original-image').naturalHeight}`; refreshZoom(); };
+$('original-image').onerror = () => { previewUnavailable = true; $('original-image').hidden = true; $('original-placeholder').hidden = false; renderState(); };
+$('result-image').onload = refreshZoom;
+const observer = new ResizeObserver(refreshZoom);
+observer.observe($('original-stage')); observer.observe($('result-stage'));
+$('background').onchange = () => { for (const id of ['original-stage', 'result-stage']) $(id).className = `image-stage ${$('background').value}`; };
+$('theme-toggle').onclick = () => { theme = theme === 'dark' ? 'light' : 'dark'; preference('pp-theme', theme); renderTheme(); };
+$('language-toggle').onclick = () => { setLanguage(language === 'zh' ? 'en' : 'zh'); renderState(); refreshZoom(); };
+$('scale').oninput = renderState; // Export-only setting: never invalidates or regenerates the native result.
+
+function renderColorLimit() {
+  $('colors').value = String(colorCount === null ? 0 : colorMinimumStop +
+    Math.round((colorCount - 2) / (colorMaximum - 2) * (1000 - colorMinimumStop)));
+  const label = colorCount === null ? t('keepColors') : String(colorCount);
+  $('colors-value').textContent = label; $('colors-max').textContent = String(colorMaximum);
+  $('colors').setAttribute('aria-valuetext', label);
+}
+function visibility() {
+  const library = palettes.find(p => p.id === $('palette').value);
+  colorMaximum = $('use-palette').checked && library ? library.unique_colors : 512;
+  if (colorCount !== null) colorCount = Math.min(colorMaximum, Math.max(2, colorCount));
+  $('palette').disabled = !$('use-palette').checked;
+  renderState();
+}
+$('colors').oninput = () => {
+  const position = Number($('colors').value);
+  colorCount = position < colorMinimumStop / 2 ? null : 2 + Math.round(
+    Math.max(0, position - colorMinimumStop) / (1000 - colorMinimumStop) * (colorMaximum - 2));
+};
+$('colors').onkeydown = event => {
+  const increments = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1, PageDown: -10, PageUp: 10 };
+  if (!(event.key in increments) && !['Home', 'End'].includes(event.key)) return;
+  event.preventDefault();
+  const next = event.key === 'Home' ? 1 : event.key === 'End' ? colorMaximum : (colorCount ?? 1) + increments[event.key];
+  colorCount = next <= 1 ? null : Math.min(colorMaximum, next);
+  scheduleColors();
+};
+function colorConfiguration() {
+  return { colors: colorCount,
+    palette: $('use-palette').checked ? $('palette').value : null, color_mode: $('color-mode').value };
+}
+function configuration() {
+  return { ...defaults, scale: 1, sampling: $('sampling').value, alpha_mode: $('alpha-mode').value,
+    local_warp: $('local-warp').value, min_pixel_size: Number($('min-size').value), max_pixel_size: Number($('max-size').value),
+    square: $('square').checked, ...colorConfiguration() };
+}
+function coreConfiguration() {
+  const { colors, palette, color_mode, ...core } = configuration(); return core;
+}
+function reset() {
+  if (!defaults) return;
+  const before = JSON.stringify(coreConfiguration()), wasDebug = $('debug').checked;
+  HTMLFormElement.prototype.reset.call($('settings'));
+  HTMLFormElement.prototype.reset.call($('color-settings'));
+  for (const [key, id] of Object.entries({ sampling: 'sampling', alpha_mode: 'alpha-mode', local_warp: 'local-warp', min_pixel_size: 'min-size', max_pixel_size: 'max-size' })) $(id).value = String(defaults[key]);
+  colorCount = defaults.colors;
+  $('use-palette').checked = defaults.palette !== null;
+  $('palette').value = defaults.palette || 'DMC436'; $('color-mode').value = defaults.color_mode;
+  $('square').checked = defaults.square; $('scale').value = String(defaults.scale);
+  visibility();
+  if (before !== JSON.stringify(coreConfiguration()) || wasDebug !== $('debug').checked) invalidate();
+  else scheduleColors();
+  renderState();
+}
+$('settings').addEventListener('input', () => { visibility(); invalidate(); });
+$('color-settings').onsubmit = event => { event.preventDefault(); scheduleColors(); };
+$('color-settings').addEventListener('input', scheduleColors);
+function scheduleColors() {
+  colorRevision++; visibility(); clearTimeout(colorTimer);
+  if (!result || stale) return;
+  colorDirty = true;
+  if (busy) return; // A running recolor will queue the latest settings on completion.
+  setBusy(false);
+  if (!$('color-settings').checkValidity()) { setStatus('colorInvalid', 'error'); return; }
+  colorTimer = setTimeout(() => {
+    if (!result || stale || busy) return;
+    const bytes = result.base.slice(0), id = ++generation;
+    pendingColorRevision = colorRevision;
+    const debugZip = result.debugZip?.slice(0);
+    setBusy(true, 'recolor'); setStatus('coloring', 'busy');
+    getWorker().postMessage({ type: 'recolor', id, bytes, settings: colorConfiguration(), debugZip },
+      debugZip ? [bytes, debugZip] : [bytes]);
+  }, 180);
+}
+$('reset').onclick = reset;
+function blobUrl(buffer, mime = 'image/png') { const url = URL.createObjectURL(new Blob([buffer], { type: mime })); urls.push(url); return url; }
+function showResult(data) {
+  clearResult(); result = data;
+  const { meta } = data;
+  if (originalUrl) URL.revokeObjectURL(originalUrl);
+  originalUrl = URL.createObjectURL(new Blob([data.original], { type: 'image/png' }));
+  previewUnavailable = false; $('original-image').hidden = false; $('original-placeholder').hidden = true; $('original-image').src = originalUrl;
+  $('result-image').src = blobUrl(data.native); $('result-image').hidden = false; $('result-placeholder').hidden = true;
+  $('result-size').textContent = meta.grid.output_size.join(' × ');
+  $('metric-grid').textContent = meta.grid.output_size.join(' × ');
+  $('metric-spacing').textContent = `${meta.grid.sx.toFixed(2)} × ${meta.grid.sy.toFixed(2)}`;
+  $('metric-confidence').textContent = meta.confidence.toFixed(3);
+  $('metric-time').textContent = `${meta.timings.total_with_export.toFixed(2)} s`;
+  $('result-summary').hidden = false; $('warnings').hidden = !meta.warnings.length;
+  if (meta.debug) {
+    $('download-debug').href = blobUrl(data.debugZip, 'application/zip');
+    $('download-debug').download = meta.name.replace(/\.png$/i, '_debug.zip'); $('download-debug').hidden = false;
+    $('diagnostics').hidden = false;
+    for (const name of ['grid', 'fft', 'edges', 'profiles', 'curvature']) {
+      const url = blobUrl(data.diagnostics[name + '.png']), button = document.createElement('button');
+      button.type = 'button'; button.dataset.i18n = name; button.textContent = t(name);
+      button.onclick = () => { $('diagnostic-image').src = url; $('diagnostic-image').alt = t(name);
+        for (const sibling of $('diagnostic-tabs').children) sibling.classList.toggle('active', sibling === button); };
+      $('diagnostic-tabs').append(button); if (name === 'grid') button.click();
+    }
+  }
+  setBusy(false); setStatus('done');
+}
+function getWorker() {
+  if (!worker) {
+    worker = new Worker(new URL('./worker.js', import.meta.url));
+    worker.onmessage = ({ data }) => {
+      if (data.type === 'progress') { if (busy) setStatus(data.key, 'busy'); return; }
+      if (data.id !== generation) return;
+      setBusy(false);
+      if (data.type === 'result') showResult(data);
+      if (data.type === 'recolor') {
+        if (pendingColorRevision !== colorRevision) { scheduleColors(); return; }
+        result.native = data.native; result.meta.color_processing = data.meta.color_processing;
+        result.colorSeconds = data.meta.seconds; colorDirty = false;
+        const previous = $('result-image').src;
+        $('result-image').src = blobUrl(data.native); URL.revokeObjectURL(previous);
+        if (data.debugZip) {
+          URL.revokeObjectURL($('download-debug').href);
+          result.debugZip = data.debugZip; $('download-debug').href = blobUrl(data.debugZip, 'application/zip');
+        }
+        setBusy(false); setStatus('colorDone');
+      }
+      if (data.type === 'export') {
+        if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+        downloadUrl = URL.createObjectURL(new Blob([data.output], { type: 'image/png' }));
+        const link = document.createElement('a'); link.href = downloadUrl; link.download = result.meta.name;
+        document.body.append(link); link.click(); link.remove(); setStatus('exported');
+      }
+      if (data.type === 'error') setStatus('failed', 'error', { detail: data.message.trim().split('\n').at(-1) });
+    };
+    worker.onerror = event => { worker.terminate(); worker = null; setBusy(false); setStatus('failed', 'error', { detail: event.message }); };
+  }
+  return worker;
+}
+$('settings').onsubmit = async event => {
+  event.preventDefault(); if (!file || busy || !defaults) return;
+  if (!$('color-settings').reportValidity()) return;
+  const id = ++generation;
+  invalidate(); setBusy(true, 'process'); $('warnings').hidden = true; setStatus('reading', 'busy');
+  try {
+    const bytes = await file.arrayBuffer(); if (id !== generation) return;
+    getWorker().postMessage({ type: 'process', id, bytes, request: { name: file.name, config: configuration(), debug: $('debug').checked } }, [bytes]);
+  } catch (error) { setBusy(false); setStatus('failed', 'error', { detail: error.message }); }
+};
+$('download').onclick = () => {
+  if (!result || stale || busy || colorDirty) return;
+  const bytes = result.native.slice(0), id = ++generation;
+  setBusy(true, 'export'); setStatus('exporting', 'busy');
+  getWorker().postMessage({ type: 'export', id, bytes, scale: Number($('scale').value) }, [bytes]);
+};
+$('cancel').onclick = () => { generation++; worker?.terminate(); worker = null; setBusy(false); setStatus('cancelled'); };
+$('original-stage').onclick = () => { if (!busy) $('file-input').click(); };
+$('original-stage').onkeydown = event => {
+  if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); if (!busy) $('file-input').click(); }
+};
+$('file-input').onchange = () => { useFile($('file-input').files[0]); $('file-input').value = ''; };
+$('clear-file').onclick = () => {
+  file = null; generation++; clearResult(); if (originalUrl) URL.revokeObjectURL(originalUrl); originalUrl = null; previewUnavailable = false;
+  $('file-input').value = ''; $('clear-file').hidden = true; $('original-image').hidden = true; $('original-image').removeAttribute('src');
+  $('original-placeholder').hidden = false; $('original-size').textContent = '—'; setStatus('selectImage');
+  views.original.factor = null; refreshZoom();
+};
+for (const name of ['dragenter', 'dragover']) $('original-stage').addEventListener(name, event => {
+  event.preventDefault(); if (!busy) { $('original-stage').classList.add('dragover'); event.dataTransfer.dropEffect = 'copy'; }
+});
+$('original-stage').addEventListener('dragleave', event => { if (!$('original-stage').contains(event.relatedTarget)) $('original-stage').classList.remove('dragover'); });
+$('original-stage').addEventListener('drop', event => { event.preventDefault(); $('original-stage').classList.remove('dragover'); if (!busy) useFile(event.dataTransfer.files[0]); });
+window.addEventListener('dragover', event => event.preventDefault());
+window.addEventListener('drop', event => event.preventDefault());
+$('sample').onclick = async () => {
+  try { const response = await fetch('./assets/demo.png'); if (!response.ok) throw new Error(t('sampleError'));
+    await useFile(new File([await response.blob()], 'lastTour.png', { type: 'image/png' }));
+  } catch (error) { setStatus('failed', 'error', { detail: error.message }); }
+};
+translate(); renderState(); setBusy(false);
+if (location.protocol === 'file:') setStatus('httpRequired', 'error');
+else {
+  try {
+    const response = await fetch('./core-manifest.json', { cache: 'no-cache' });
+    if (!response.ok) throw new Error(t('syncRequired'));
+    const manifest = await response.json(); defaults = manifest.defaults; palettes = manifest.palettes;
+    for (const item of palettes) { const option = document.createElement('option'); option.value = item.id; $('palette').append(option); }
+    reset(); setBusy(false);
+  } catch (error) { setStatus('failed', 'error', { detail: error.message }); }
+}

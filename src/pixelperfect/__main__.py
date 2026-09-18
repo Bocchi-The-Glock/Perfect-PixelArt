@@ -5,39 +5,19 @@ import sys
 from .config import Config
 from .pipeline import pixelize
 from .image_io import save_result
-
-
-def _spacing(text):
-    try:
-        parts = text.lower().split("x")
-        if len(parts) == 1:
-            return float(parts[0])
-        if len(parts) == 2:
-            return tuple(map(float, parts))
-    except ValueError:
-        pass
-    raise argparse.ArgumentTypeError("pixel size must be a number or SXxSY, e.g. 8 or 8x9")
-
-
-def _dimensions(text):
-    try:
-        parts = tuple(map(int, text.lower().split("x")))
-        if len(parts) == 2 and min(parts) > 0:
-            return parts
-    except ValueError:
-        pass
-    raise argparse.ArgumentTypeError("target size must be positive WxH, e.g. 64x64")
+from .palette import PALETTE_IDS
 
 
 def parser():
     p = argparse.ArgumentParser(description="Restore pseudo pixel art to native low-resolution PNG.")
     p.add_argument("-i", "--input", required=True, type=Path)
     p.add_argument("-o", "--output", type=Path, help="default: project output/<input-stem>.png")
-    modes = p.add_mutually_exclusive_group()
-    modes.add_argument("--pixel-size", type=_spacing, help="source cell spacing; phase remains optimized")
-    modes.add_argument("--target-size", type=_dimensions, help="exact native output WxH (preserve aspect ratio)")
-    p.add_argument("--colors", type=int)
-    p.add_argument("--scale", type=int, default=1, help="integer nearest-neighbor export multiplier")
+    p.add_argument("--colors", type=int, help="optional maximum visible RGB colors (1-512); default unlimited")
+    p.add_argument("--palette", nargs="?", const="DMC436", choices=PALETTE_IDS,
+                   help="optional bead library; flag without a name selects DMC436")
+    p.add_argument("--color-mode", choices=("natural", "rgb"), default="natural",
+                   help="postprocessing distance: natural (Lab/CIEDE2000) or RGB")
+    p.add_argument("--scale", type=int, default=1, help="integer nearest-neighbor export multiplier (1-16)")
     p.add_argument("--sampling", choices=("robust", "center", "median"), default="robust")
     p.add_argument("--alpha-mode", choices=("auto", "binary", "coverage"), default="auto",
                    help="auto: sampled alpha; binary: explicit threshold; coverage: averaged alpha")
@@ -45,7 +25,8 @@ def parser():
     p.add_argument("--min-pixel-size", type=float, default=2)
     p.add_argument("--max-pixel-size", type=float, default=64)
     p.add_argument("--square", action="store_true", help="require equal nominal x/y spacing")
-    p.add_argument("--debug-dir", type=Path)
+    p.add_argument("--debug", action="store_true", help="write diagnostic files to output/debug/<output-stem>/")
+    p.add_argument("--debug-dir", type=Path, help="override diagnostic directory; requires --debug")
     p.add_argument("--verbose", action="store_true")
     return p
 
@@ -53,22 +34,25 @@ def parser():
 def main(argv=None):
     p = parser()
     args = p.parse_args(argv)
+    if args.debug_dir is not None and not args.debug:
+        p.error("--debug-dir requires --debug")
     try:
-        config = Config(pixel_size=args.pixel_size, target_size=args.target_size, colors=args.colors,
+        config = Config(colors=args.colors, palette=args.palette, color_mode=args.color_mode,
                         scale=args.scale, sampling=args.sampling, local_warp=args.local_warp,
                         alpha_mode=args.alpha_mode,
                         min_pixel_size=args.min_pixel_size, max_pixel_size=args.max_pixel_size,
                         square=args.square)
+        checkout = Path(__file__).resolve().parents[2]
+        root = checkout if (checkout / "pixelperfect.py").is_file() else Path.cwd()
         if args.output is None:
-            checkout = Path(__file__).resolve().parents[2]
-            root = checkout if (checkout / "pixelperfect.py").is_file() else Path.cwd()
             args.output = root / "output" / (args.input.stem + ".png")
         if args.output.suffix.lower() != ".png":
             raise ValueError("output must have a .png extension")
         if args.input.resolve() == args.output.resolve():
             raise ValueError("input and output paths must differ")
         result = pixelize(args.input, config)
-        save_result(result, args.output, args.scale, debug_dir=args.debug_dir)
+        debug_dir = (args.debug_dir or root / "output" / "debug" / args.output.stem) if args.debug else None
+        save_result(result, args.output, args.scale, debug_dir=debug_dir, debug=args.debug)
         print(f"grid={result.image.width}x{result.image.height}; "
               f"pixel spacing={result.grid['sx']:.3f}x{result.grid['sy']:.3f}; "
               f"confidence={result.confidence:.3f}; "
@@ -76,6 +60,10 @@ def main(argv=None):
               f"time={result.timings['total_with_export']:.3f}s; output={args.output}")
         for message in result.diagnostics["warnings"]:
             print(f"pixelperfect: {message}", file=sys.stderr)
+        color_info = result.diagnostics["color_processing"]
+        if color_info["applied"]:
+            print(f"colors={color_info['output_colors']}; palette={args.palette or 'adaptive'}; "
+                  f"limit={args.colors or 'unlimited'}; color mode={args.color_mode}")
         if args.verbose:
             print(f"native={result.image.width}x{result.image.height}; heuristic confidence={result.confidence:.3f}; "
                   f"export scale={args.scale}", file=sys.stderr)

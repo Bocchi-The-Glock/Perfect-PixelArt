@@ -34,7 +34,7 @@ def white_input(path):
         return Image.alpha_composite(background, rgba).convert("RGB")
 
 
-def run_pair(path, destination, main_function):
+def run_pair(path, destination, main_function, debug_dir=None):
     name = path.stem + ".png"
     main_path, plus_path = destination/"main"/name, destination/"plus"/name
     shared_path = destination/"input_white"/name
@@ -69,6 +69,8 @@ def run_pair(path, destination, main_function):
     record["main"]["log"] = stream.getvalue()
 
     command = [sys.executable, str(ROOT/"pixelperfect.py"), "-i", str(shared_path), "-o", str(plus_path)]
+    if debug_dir is not None:
+        command.extend(["--debug", "--debug-dir", str(debug_dir)])
     # Real CLI invocation: no pixel-size, target-size, sampling, or grid overrides.
     completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True,
                                encoding="utf-8", errors="replace")
@@ -77,9 +79,11 @@ def run_pair(path, destination, main_function):
     if completed.returncode == 0:
         with Image.open(plus_path) as image:
             plus_image = image.copy()
-        info = json.loads((plus_path.parent/(path.stem+"_debug")/"info.json").read_text(encoding="utf-8"))
-        record["plus"].update(status="fallback" if info["grid"]["fallback"] else "ok",
-                              size=list(plus_image.size), output=str(plus_path), grid=info["grid"])
+        record["plus"].update(status="fallback" if "No reliable grid evidence" in completed.stderr else "ok",
+                              size=list(plus_image.size), output=str(plus_path))
+        if debug_dir is not None:
+            info = json.loads((Path(debug_dir)/"info.json").read_text(encoding="utf-8"))
+            record["plus"].update(grid=info["grid"], debug_dir=str(debug_dir))
     else:
         record["plus"].update(status="error")
     print(path.name, "main:", record["main"].get("size", "error"),
@@ -123,7 +127,7 @@ def write_comparison(rows, path, fixed_zoom=None):
     return [item[0] for item in layouts]
 
 
-def run(input_path=None, output_dir=None):
+def run(input_path=None, output_dir=None, debug=False):
     output_dir = ROOT/"output" if output_dir is None else Path(output_dir).resolve()
     if input_path is None:
         files = sorted(p.resolve() for p in (ROOT/"input").iterdir() if p.is_file()
@@ -136,7 +140,8 @@ def run(input_path=None, output_dir=None):
         raise ValueError("Input basenames must be distinct; compare colliding names separately")
     output_dir.mkdir(parents=True,exist_ok=True)
     function = load_main()  # Original package selects its own backend.
-    rows = [run_pair(path,output_dir/"comparison_native",function) for path in files]
+    rows = [run_pair(path,output_dir/"comparison_native",function,
+                     output_dir/"debug"/"comparison"/path.stem if debug else None) for path in files]
     zooms = write_comparison(rows,output_dir/"comparison.png")
     for row in rows:
         write_comparison([row],output_dir/"comparison_native"/(Path(row[0]).stem+"_8x.png"),fixed_zoom=8)
@@ -154,5 +159,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-i","--input",type=Path,help="one real image; default: images in input/")
     parser.add_argument("--output-dir",type=Path)
+    parser.add_argument("--debug", action="store_true", help="save Plus diagnostics under output/debug/comparison/")
     args=parser.parse_args()
-    raise SystemExit(run(args.input,args.output_dir))
+    raise SystemExit(run(args.input,args.output_dir,args.debug))

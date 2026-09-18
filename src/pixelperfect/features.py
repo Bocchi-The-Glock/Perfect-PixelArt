@@ -33,6 +33,26 @@ class FeatureData:
     curvature_x: np.ndarray
     curvature_y: np.ndarray
     ramp_ratio: tuple
+    native_axes: tuple
+
+
+def _native_axis(scanlines):
+    """Count one-pixel contrast reversals on original-resolution alpha-aware strips.
+
+    A-B-C votes only where B leaves the interval between A and C in at least one
+    premultiplied channel. Smooth monotone edge ramps do not vote.
+    """
+    values = scanlines.copy()
+    values[..., :3] *= values[..., 3:]
+    delta = np.diff(values, axis=1)
+    edges = np.max(np.abs(delta), axis=-1) > .06
+    reversal = np.max((np.abs(delta[:, :-1]) + np.abs(delta[:, 1:])
+                       - np.abs(delta[:, :-1] + delta[:, 1:])) * .5, axis=-1) > .06
+    counts = reversal.sum(axis=1)
+    return dict(edge_count=int(edges.sum()), turn_count=int(counts.sum()),
+                turn_fraction=float(counts.sum() / max(1, edges.sum())),
+                supporting_lines=int(np.count_nonzero(counts >= 2)),
+                active_lines=int(np.count_nonzero(edges.sum(axis=1) >= 4)))
 
 
 def extract_features(rgba):
@@ -64,4 +84,5 @@ def extract_features(rgba):
     ratio = (float(cx.sum() / max(float(gx[rows].sum()), 1e-9)),
              float(cy.sum() / max(float(gy[:, cols].sum()), 1e-9)))
     return FeatureData(gx, gy, px, py, spectrum, sx, sy[:len(sy) // 2 + 1],
-                       smooth(cx.mean(axis=0)), smooth(cy.mean(axis=1)), ratio)
+                       smooth(cx.mean(axis=0)), smooth(cy.mean(axis=1)), ratio,
+                       (_native_axis(rgba[rows]), _native_axis(rgba[:, cols].transpose(1, 0, 2))))

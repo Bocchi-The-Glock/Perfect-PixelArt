@@ -1,4 +1,4 @@
-"""Always-on FFT, colour-edge and grid pictures, drawn with Pillow only."""
+"""Opt-in FFT, colour-edge and grid pictures, drawn with Pillow only."""
 import json
 from pathlib import Path
 from time import perf_counter
@@ -60,6 +60,7 @@ def write_debug(result, original=None, directory=None, export_path=None, export_
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     debug = result.debug_data
+    draw_grid = not result.grid["fallback"] and not result.grid.get("native_preserved", False)
     w, h = result.grid["input_size"]
     half = debug["spectrum"]
     tail = half[:, 1:-1] if w % 2 == 0 else half[:, 1:]
@@ -69,7 +70,7 @@ def write_debug(result, original=None, directory=None, export_path=None, export_
     pixels = np.clip((spectrum - low) / max(high - low, 1e-8), 0, 1)
     fft = Image.fromarray(np.rint(pixels * 255).astype(np.uint8)).convert("RGB")
     fft_lines = None
-    if not result.grid["fallback"]:
+    if draw_grid:
         fft_lines = ([w // 2 + offset * w / result.grid["sx"] for offset in (-1, 1)],
                      [h // 2 + offset * h / result.grid["sy"] for offset in (-1, 1)])
     _display(fft, "Image FFT: log(1+|F|); red = selected reciprocal spacing", lines=fft_lines).save(directory / "fft.png")
@@ -85,7 +86,7 @@ def write_debug(result, original=None, directory=None, export_path=None, export_
     bg = Image.new("RGBA", source.size, (190, 190, 190, 255))
     bg.alpha_composite(source)
     overlay = bg.convert("RGB")
-    lines = None if result.grid["fallback"] else (result.grid["x_lines"], result.grid["y_lines"])
+    lines = (result.grid["x_lines"], result.grid["y_lines"]) if draw_grid else None
     title = (f"Grid {result.image.width}x{result.image.height}; "
              f"spacing {result.grid['sx']:.3f}x{result.grid['sy']:.3f}; confidence {result.confidence:.3f}")
     _display(overlay, title, lines=lines).save(directory / "grid.png")
@@ -96,11 +97,11 @@ def write_debug(result, original=None, directory=None, export_path=None, export_
             (debug["profile_y"], result.grid["y_lines"], "Y")]):
         y = i * 300
         _plot(d, (20, y + 10, 1015, y + 140), profile, "#8ddbc1", name + " colour edge projection; red=cuts",
-              () if result.grid["fallback"] else lines)
+              lines if draw_grid else ())
         power = abs(np.fft.rfft(profile - profile.mean()))
         spacing = result.grid["sx" if i == 0 else "sy"]
         _plot(d, (20, y + 160, 1015, y + 290), power, "#e2c87a", name + " edge-projection FFT",
-              () if result.grid["fallback"] else [len(profile) / spacing])
+              [len(profile) / spacing] if draw_grid else ())
     plots.save(directory / "profiles.png")
     knots = Image.new("RGB", (1040, 330), "#20232b")
     kd = ImageDraw.Draw(knots)
@@ -110,7 +111,7 @@ def write_debug(result, original=None, directory=None, export_path=None, export_
         _plot(kd, (20, 10+i*160, 1015, 150+i*160), debug["curvature_" + axis], "#8dbaf0",
               axis.upper()+" curvature; red=cell centres; model="+
               result.diagnostics["grid_search"].get("evidence_model", "boundaries"),
-              () if result.grid["fallback"] else centres)
+              centres if draw_grid else ())
     knots.save(directory / "curvature.png")
     result.timings["debug_images"] = perf_counter() - started
     result.timings["total_with_export"] = (result.timings["total"] + result.timings.get("save_png", 0)

@@ -7,3 +7,5 @@ src/.install_check*/
 src/build/
 src/dist/
 build/
+output/debug/
+web/tests/

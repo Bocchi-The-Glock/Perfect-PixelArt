@@ -20,6 +20,9 @@ pixelperfect = "pixelperfect.__main__:main"
 where = ["src"]
 include = ["pixelperfect*"]
 
+[tool.setuptools.package-data]
+pixelperfect = ["palettes.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["src/tests"]
 pythonpath = ["src"]

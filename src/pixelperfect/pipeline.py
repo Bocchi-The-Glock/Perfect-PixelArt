@@ -8,7 +8,7 @@ from .image_io import load_image, to_pil
 from .features import extract_features
 from .grid import detect_grid
 from .sampling import recover_cells, CellResult, _resolve_alpha_mode
-from .palette import quantize_cells
+from .palette import process_colors
 
 
 @dataclass
@@ -20,6 +20,7 @@ class PixelizeResult:
     diagnostics: dict
     cell_confidence: np.ndarray = field(repr=False)
     debug_data: dict = field(default_factory=dict, repr=False)
+    native_image: Image.Image | None = field(default=None, repr=False)
 
 
 def pixelize(image, config=None):
@@ -31,14 +32,6 @@ def pixelize(image, config=None):
     data = load_image(image)
     rgba = data.rgba
     h, w = rgba.shape[:2]
-    if config.target_size:
-        tw, th = config.target_size
-        if tw > w or th > h:
-            raise ValueError("target_size cannot exceed input dimensions")
-        if config.square and abs(w / tw - h / th) > 1e-8:
-            raise ValueError("square mode requires equal source spacings")
-        if abs(w / tw - h / th) > max(1 / tw, 1 / th) + 1e-8:
-            raise ValueError("target_size aspect ratio conflicts with input")
     timings = {"read_preprocess": perf_counter() - start}
     t = perf_counter()
     features = extract_features(rgba)
@@ -72,11 +65,12 @@ def pixelize(image, config=None):
             warnings.append("Low heuristic grid confidence; check the grid overlay.")
     timings["sampling"] = perf_counter() - t
     t = perf_counter()
-    if config.colors is not None:
-        cells = quantize_cells(cells, config.colors)
+    native = to_pil(cells.rgba, data.has_alpha)
+    colored = process_colors(native, colors=config.colors, palette=config.palette, color_mode=config.color_mode)
     timings["palette"] = perf_counter() - t
-    output = to_pil(cells.rgba, data.has_alpha)
+    output = colored.image
     grid.update(output_size=list(output.size), input_size=[w, h], fallback=chosen is None,
+                native_preserved=chosen is not None and chosen.metadata.get('native_preserved', False),
                 coverage="full input; integer half-open source boxes",
                 median_cell_width=float(np.median(np.diff(grid["x_lines"]))),
                 median_cell_height=float(np.median(np.diff(grid["y_lines"]))))
@@ -88,5 +82,6 @@ def pixelize(image, config=None):
     return PixelizeResult(output, grid, confidence, timings,
                           dict(warnings=warnings, fallback=chosen is None,
                                confidence_kind="uncalibrated heuristic score", grid_search=search,
-                               structure=cells.structure, selected_score=search.get("selected_score")),
-                          cells.confidence, debug)
+                               structure=cells.structure, selected_score=search.get("selected_score"),
+                               color_processing=colored.diagnostics),
+                          cells.confidence, debug, native_image=native)

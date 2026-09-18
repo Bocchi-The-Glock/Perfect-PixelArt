@@ -17,9 +17,7 @@ class GridCandidate:
     metadata: dict = field(default_factory=dict)
 
 
-def make_lines(length, spacing, phase=0., count=None):
-    if count is not None:
-        return np.linspace(0, length, count + 1)
+def make_lines(length, spacing, phase=0.):
     inside = np.arange(phase - spacing, length + spacing, spacing)
     inside = inside[(inside >= max(.5, .2 * spacing)) & (inside <= length - max(.5, .2 * spacing))]
     return np.r_[0., inside, float(length)]
@@ -133,51 +131,43 @@ def _detect_grid(features, shape, config):
             for p, spec, n in [(features.profile_x, features.spectral_x, w),
                                (features.profile_y, features.spectral_y, h)]]
     report = {"axis_proposals": [a["proposals"] for a in axes], "candidates": []}
-    if config.target_size is not None:
-        tw, th = config.target_size
-        return GridCandidate(w / tw, h / th, 0., 0., make_lines(w, w / tw, count=tw),
-                             make_lines(h, h / th, count=th), metadata={"source": "target size"}), report
-    manual = config.pixel_size is not None
-    if manual:
-        candidates = [(config.pixel_size, "pixel size")]
-    else:
-        if any(len(a["pos"]) < 4 or a["contrast"] < .25 for a in axes):
-            return None, report
-        pool = []
-        for a in axes:
-            for s, origin in a["proposals"]:
-                for factor, label in [(1., ""), (.5, " half"), (2., " double")]:
-                    value = s * factor
-                    if config.min_pixel_size <= value <= min(config.max_pixel_size, w / 2, h / 2):
-                        if not any(abs(value - old[0]) < .08 for old in pool):
-                            pool.append((value, origin + label))
-        candidates = [((s, s), origin) for s, origin in pool]
-        # Accept mildly rectangular spacings only with strong regular evidence
-        # in BOTH directions; irregular AI contours keep a common spacing.
-        if not config.square:
-            best_axes = []
-            for axis in axes:
-                fits = []
-                for spacing, _ in axis["proposals"]:
-                    phase = _phase(axis, spacing)
-                    pos, weights = axis["pos"], axis["weights"]
-                    index = np.rint((pos - phase) / spacing)
-                    residual = pos - (phase + index * spacing)
-                    keep = abs(residual) <= max(.7, .18 * spacing)
-                    if np.count_nonzero(keep) >= 4 and np.ptp(index[keep]) > 0:
-                        xx, yy, ww = index[keep], pos[keep], weights[keep]
-                        xx = xx - np.average(xx, weights=ww)
-                        slope = np.sum(ww * xx * yy) / np.sum(ww * xx * xx)
-                        if abs(slope / spacing - 1) < .025:
-                            spacing = float(slope)
-                    phase = _phase(axis, spacing)
-                    metric = _measure(axis, spacing, make_lines(len(axis["profile"]), spacing, phase))
-                    fits.append((metric["score"], spacing, metric["edge_fit"]))
-                best_axes.append(max(fits, default=(0, 1, 0)))
-            bx, by = best_axes
-            if min(bx[2], by[2]) > .85 and max(bx[1], by[1]) / min(bx[1], by[1]) <= 1.12:
-                if config.min_pixel_size <= min(bx[1],by[1]) and max(bx[1],by[1]) <= config.max_pixel_size:
-                    candidates.append(((bx[1], by[1]), "strong regular colour edges"))
+    if any(len(a["pos"]) < 4 or a["contrast"] < .25 for a in axes):
+        return None, report
+    pool = []
+    for a in axes:
+        for s, origin in a["proposals"]:
+            for factor, label in [(1., ""), (.5, " half"), (2., " double")]:
+                value = s * factor
+                if config.min_pixel_size <= value <= min(config.max_pixel_size, w / 2, h / 2):
+                    if not any(abs(value - old[0]) < .08 for old in pool):
+                        pool.append((value, origin + label))
+    candidates = [((s, s), origin) for s, origin in pool]
+    # Accept mildly rectangular spacings only with strong regular evidence
+    # in BOTH directions; irregular AI contours keep a common spacing.
+    if not config.square:
+        best_axes = []
+        for axis in axes:
+            fits = []
+            for spacing, _ in axis["proposals"]:
+                phase = _phase(axis, spacing)
+                pos, weights = axis["pos"], axis["weights"]
+                index = np.rint((pos - phase) / spacing)
+                residual = pos - (phase + index * spacing)
+                keep = abs(residual) <= max(.7, .18 * spacing)
+                if np.count_nonzero(keep) >= 4 and np.ptp(index[keep]) > 0:
+                    xx, yy, ww = index[keep], pos[keep], weights[keep]
+                    xx = xx - np.average(xx, weights=ww)
+                    slope = np.sum(ww * xx * yy) / np.sum(ww * xx * xx)
+                    if abs(slope / spacing - 1) < .025:
+                        spacing = float(slope)
+                phase = _phase(axis, spacing)
+                metric = _measure(axis, spacing, make_lines(len(axis["profile"]), spacing, phase))
+                fits.append((metric["score"], spacing, metric["edge_fit"]))
+            best_axes.append(max(fits, default=(0, 1, 0)))
+        bx, by = best_axes
+        if min(bx[2], by[2]) > .85 and max(bx[1], by[1]) / min(bx[1], by[1]) <= 1.12:
+            if config.min_pixel_size <= min(bx[1],by[1]) and max(bx[1],by[1]) <= config.max_pixel_size:
+                candidates.append(((bx[1], by[1]), "strong regular colour edges"))
 
     ranked = []
     for sizes, origin in candidates:
@@ -206,7 +196,7 @@ def _detect_grid(features, shape, config):
     report["refined"] = [{"spacing": list(ss), "score": value, "axes": mm}
                          for value, ss, _, _, _, mm in finalists]
     report["selected_score"] = score
-    if not manual and (score < .31 or min(m["unit_gaps"] for m in metrics) < .10):
+    if score < .31 or min(m["unit_gaps"] for m in metrics) < .10:
         return None, report
     warped = any(len(c) != len(make_lines(n, s, p)) or not np.allclose(c, make_lines(n, s, p))
                  for c, n, s, p in zip(lines, (w, h), sizes, phases))
@@ -214,11 +204,11 @@ def _detect_grid(features, shape, config):
                          {"source": origin, "axis_metrics": metrics}), report
 
 
-def detect_grid(features, shape, config):
+def _coarse_grid(features, shape, config):
     edge, report = _detect_grid(features, shape, config)
     report["ramp_curvature_ratio"] = list(features.ramp_ratio)
     report["evidence_model"] = "colour boundaries"
-    if config.target_size is not None or max(features.ramp_ratio) >= .65:
+    if max(features.ramp_ratio) >= .65:
         return edge, report
     # A separate, strictly gated observation model: linear interpolation has
     # curvature at source pixel CENTRES, not at cell boundaries. FFT remains
@@ -240,3 +230,73 @@ def detect_grid(features, shape, config):
     report["evidence_model"] = "linear interpolation knots"
     report["selected_score"] = knot.support
     return knot, report
+
+
+def _native_resolution(features, shape, chosen, report):
+    """Conservative one-pixel alternative, independent of filename and image size.
+
+    A perfect per-pixel reconstruction error alone would make every photograph
+    win. Require repeated sharp one-pixel details in both axes AND weak alignment
+    of raw edges to the proposed coarser grid instead.
+    """
+    axes = features.native_axes
+    boundary_fit = []
+    if chosen is not None:
+        for g, cuts, direction in ((features.gradient_x, chosen.x_lines, 0),
+                                   (features.gradient_y, chosen.y_lines, 1)):
+            mass = np.minimum(g, .35) * (g > .06)
+            profile = mass.sum(axis=direction)
+            positions = np.unique(np.clip(np.rint(cuts).astype(int), 0, len(profile) - 1))
+            boundary_fit.append(float(profile[positions].sum() / max(float(profile.sum()), 1e-9)))
+    sharp = min(features.ramp_ratio) >= 1.6
+    detail = all(a['turn_fraction'] >= .08 and a['turn_count'] >= 8
+                 and a['supporting_lines'] >= 3 for a in axes)
+    coarse_supported = len(boundary_fit) == 2 and min(boundary_fit) >= .80
+    preserve = chosen is not None and sharp and detail and not coarse_supported
+    report['native_resolution'] = dict(
+        axes=list(axes), sharpness_ratio=list(features.ramp_ratio),
+        coarse_boundary_fit=boundary_fit, selected=bool(preserve),
+        reason='one-pixel detail contradicts coarse grid' if preserve else 'insufficient native detail evidence')
+    if not preserve:
+        return chosen, report
+    report['rejected_coarse_grid'] = None if chosen is None else dict(
+        spacing=[chosen.sx, chosen.sy], score=chosen.support, source=chosen.metadata['source'])
+    report['evidence_model'] = 'native pixel detail'
+    # Preservation does not establish a unique original grid.
+    confidence = float(min(.75, .5 + min(a['turn_fraction'] for a in axes)))
+    report['selected_score'] = confidence
+    h, w = shape[:2]
+    return GridCandidate(1., 1., 0., 0., np.arange(w + 1, dtype=float),
+                         np.arange(h + 1, dtype=float), confidence,
+                         metadata={'source': 'native pixel detail', 'native_preserved': True}), report
+
+
+def _exact_two_pixel_grid(features, shape, config):
+    """Recover clean 2x repetition before smoothed projections erase its period.
+
+    All changed rows/columns, including weak changes, must align. Isolated noise
+    invalidates this exact-repetition shortcut; no resampling or color guessing.
+    """
+    if not config.min_pixel_size <= 2 <= config.max_pixel_size:
+        return None
+    phases = []
+    for g, direction in ((features.gradient_x, 0), (features.gradient_y, 1)):
+        pos = np.flatnonzero(g.max(axis=direction) > 1e-6)
+        if len(pos) < 4 or np.gcd.reduce(np.diff(pos)) != 2:
+            return None
+        phases.append(float(pos[0] % 2))
+    h, w = shape[:2]
+    return GridCandidate(2., 2., *phases, make_lines(w, 2, phases[0]), make_lines(h, 2, phases[1]),
+                         .95, metadata={'source': 'exact two-pixel repetition'})
+
+
+def detect_grid(features, shape, config):
+    chosen, report = _coarse_grid(features, shape, config)
+    exact = _exact_two_pixel_grid(features, shape, config)
+    if exact is not None:
+        chosen = exact
+        report['evidence_model'] = 'exact two-pixel repetition'
+        report['exact_two_pixel_grid'] = dict(spacing=[2., 2.], phase=[exact.phase_x, exact.phase_y],
+                                             score=exact.support, all_changes_aligned=True)
+        report['selected_score'] = exact.support
+    return _native_resolution(features, shape, chosen, report)

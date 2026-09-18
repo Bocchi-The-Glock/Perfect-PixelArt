@@ -11,12 +11,199 @@ import numpy as np
 import pytest
 from PIL import Image, ImageFilter
 
-from pixelperfect import Config, pixelize, save_result
+from pixelperfect import Config, pixelize, save_result, export_png
 from pixelperfect.features import extract_features
 from pixelperfect.grid import detect_grid, make_lines
-from pixelperfect.image_io import load_image
+from pixelperfect.image_io import load_image, to_pil
 from pixelperfect.palette import quantize_cells
 from pixelperfect.sampling import recover_cells
+from pixelperfect import process_colors, palette_catalog
+from pixelperfect.palette import palette_rgb, PALETTE_IDS
+from pixelperfect.color_math import rgb_to_lab, delta_e_2000, nearest
+
+
+# Pixel hashes independently reproduced with pre-color revision d225caa.
+# Protect the original detector and sampler when changing optional color features.
+@pytest.mark.parametrize('name,size,digest', [
+    ('bocchi.png', (131, 198), '5569099de36d9fe3d6a2b5b45490e56b2fd5034538f1e2e0cf89d2060a2bb709'),
+    ('bocchi2.png', (125, 93), '2297be6439f66b988ec8f477e8a8ea67fc9041d205e7401e31e1e240e61a4357'),
+    ('chito.png', (111, 166), 'efe30fa335a23edb46d06c1f6b456f6f8cacfa1111c8a58d5b58bafbfa0f4481'),
+    ('hollow-knight-sprite.png', (70, 73), '27ddbc261a1e0d3ebcead22de08ce52093ca5583f3b19caf7ebaeb2e96f75384'),
+    ('lastTour.png', (331, 219), '79e8a80e54ab2bafe654340d9e8f677b360447d621359826034c085ba2fcaed9'),
+    ('ritsu.png', (156, 232), '9c319fbad9cf76587f85bd7b91c96ec2b8a74d8c391f636b51338e55e3d62767'),
+])
+def test_default_recovery_preserves_pre_color_pixels(name, size, digest):
+    import hashlib
+    source = Path(__file__).resolve().parents[2] / 'input' / name
+    result = pixelize(source)
+    assert result.image.size == size
+    assert hashlib.sha256(result.image.convert('RGBA').tobytes()).hexdigest() == digest
+    np.testing.assert_array_equal(result.native_image, result.image)
+
+
+# OPTIONAL COLOR POSTPROCESSING
+# All 34 reference pairs published by Sharma, Wu & Dalal, including hue wrap cases.
+# https://hajim.rochester.edu/ece/sites/gsharma/ciede2000/dataNprograms/ciede2000testdata.txt
+CIEDE_REFERENCE = np.loadtxt(io.StringIO('''
+50 2.6772 -79.7751 50 0 -82.7485 2.0425
+50 3.1571 -77.2803 50 0 -82.7485 2.8615
+50 2.8361 -74.0200 50 0 -82.7485 3.4412
+50 -1.3802 -84.2814 50 0 -82.7485 1.0000
+50 -1.1848 -84.8006 50 0 -82.7485 1.0000
+50 -0.9009 -85.5211 50 0 -82.7485 1.0000
+50 0 0 50 -1 2 2.3669
+50 -1 2 50 0 0 2.3669
+50 2.4900 -0.0010 50 -2.4900 0.0009 7.1792
+50 2.4900 -0.0010 50 -2.4900 0.0010 7.1792
+50 2.4900 -0.0010 50 -2.4900 0.0011 7.2195
+50 2.4900 -0.0010 50 -2.4900 0.0012 7.2195
+50 -0.0010 2.4900 50 0.0009 -2.4900 4.8045
+50 -0.0010 2.4900 50 0.0010 -2.4900 4.8045
+50 -0.0010 2.4900 50 0.0011 -2.4900 4.7461
+50 2.5000 0 50 0 -2.5000 4.3065
+50 2.5000 0 73 25 -18 27.1492
+50 2.5000 0 61 -5 29 22.8977
+50 2.5000 0 56 -27 -3 31.9030
+50 2.5000 0 58 24 15 19.4535
+50 2.5000 0 50 3.1736 0.5854 1.0000
+50 2.5000 0 50 3.2972 0 1.0000
+50 2.5000 0 50 1.8634 0.5757 1.0000
+50 2.5000 0 50 3.2592 0.3350 1.0000
+60.2574 -34.0099 36.2677 60.4626 -34.1751 39.4387 1.2644
+63.0109 -31.0961 -5.8663 62.8187 -29.7946 -4.0864 1.2630
+61.2901 3.7196 -5.3901 61.4292 2.2480 -4.9620 1.8731
+35.0831 -44.1164 3.7933 35.0232 -40.0716 1.5901 1.8645
+22.7233 20.0904 -46.6940 23.0331 14.9730 -42.5619 2.0373
+36.4612 47.8580 18.3852 36.2715 50.5065 21.2231 1.4146
+90.8027 -2.0831 1.4410 91.1528 -1.6435 0.0447 1.4441
+90.9257 -0.5406 -0.9208 88.6381 -0.8985 -0.7239 1.5381
+6.7747 -0.2908 -2.4247 5.8714 -0.0985 -2.2286 0.6377
+2.0776 0.0795 -1.1350 0.9033 -0.0636 -0.5514 0.9082
+'''))
+
+
+@pytest.mark.parametrize('pair', CIEDE_REFERENCE)
+def test_ciede2000_reference(pair):
+    assert delta_e_2000(pair[:3], pair[3:6]) == pytest.approx(pair[6], abs=5e-5)
+    assert delta_e_2000(pair[3:6], pair[:3]) == pytest.approx(pair[6], abs=5e-5)
+
+
+def test_lab_primaries_and_global_rgb_match():
+    np.testing.assert_allclose(rgb_to_lab([[0, 0, 0], [255, 255, 255], [255, 0, 0]]),
+                               [[0, 0, 0], [100, 0, 0], [53.2408, 80.0925, 67.2032]], atol=1e-3)
+    palette = np.array([[0, 0, 0], [0, 1, 0], [0, 0, 1], [32, 15, 15]], float)
+    assert nearest(np.array([[15, 15, 15]], float), palette, 'rgb')[0] == 3
+    target = np.array([[64, 64, 32]], float)
+    palette = np.array([[176, 64, 64], [128, 96, 96], [128, 128, 64], [64, 128, 128]], float)
+    assert nearest(target, palette, 'rgb')[0] == 1
+    assert nearest(rgb_to_lab(target), rgb_to_lab(palette), 'natural')[0] == 2
+
+
+def test_library_catalog_actual_counts():
+    catalog = palette_catalog()
+    assert [p['id'] for p in catalog] == list(PALETTE_IDS)
+    assert [p['entries'] for p in catalog] == [436, 24, 48, 72, 96, 120, 144, 221, 275]
+    assert catalog[-1]['name'] == '拼豆-MARD-280色'
+    assert catalog[-1]['nominal_size'] == 280
+    assert Config().colors is None and Config().palette is None
+
+
+@pytest.mark.parametrize('palette', PALETTE_IDS)
+@pytest.mark.parametrize('mode', ['rgb', 'natural'])
+def test_bead_matching_and_limiting_stay_in_library(palette, mode):
+    rgb = palette_rgb(palette)
+    # Exact bead swatches must survive unrestricted matching, including >256 colors.
+    source = Image.fromarray(rgb[None])
+    unlimited = process_colors(source, palette=palette, color_mode=mode)
+    np.testing.assert_array_equal(unlimited.image, source)
+    rgba = np.concatenate([rgb, np.full((len(rgb), 1), 255, np.uint8)], axis=1)[None]
+    rgba[:, :4, 3] = [0, 1, 127, 254]
+    first = process_colors(Image.fromarray(rgba), colors=8, palette=palette, color_mode=mode)
+    second = process_colors(Image.fromarray(rgba), colors=8, palette=palette, color_mode=mode)
+    actual = np.array(first.image)
+    np.testing.assert_array_equal(actual, second.image)
+    np.testing.assert_array_equal(actual[..., 3], rgba[..., 3])
+    visible = actual[actual[..., 3] > 0, :3]
+    assert len(np.unique(visible, axis=0)) <= 8
+    assert set(map(tuple, visible)).issubset(set(map(tuple, rgb)))
+
+
+@pytest.mark.parametrize('mode', ['rgb', 'natural'])
+def test_unlimited_is_reversible_and_hidden_rgb_cannot_vote(mode):
+    rng = np.random.default_rng(313)
+    rgba = rng.integers(0, 256, (20, 20, 4), dtype=np.uint8)
+    rgba[:5, :, 3] = 0
+    source = Image.fromarray(rgba)
+    np.testing.assert_array_equal(process_colors(source).image, source)
+    alternate = rgba.copy(); alternate[:5, :, :3] = [255, 0, 0]
+    for palette in [None, 'DMC436']:
+        a = process_colors(source, colors=8, palette=palette, color_mode=mode)
+        b = process_colors(Image.fromarray(alternate), colors=8, palette=palette, color_mode=mode)
+        np.testing.assert_array_equal(a.image, b.image)
+        np.testing.assert_array_equal(np.array(a.image)[..., 3], rgba[..., 3])
+    np.testing.assert_array_equal(process_colors(source).image, source)
+
+
+def test_color_postprocessing_never_detects_grid(monkeypatch):
+    import pixelperfect.pipeline as pipeline
+    def fail(*args, **kwargs):
+        raise AssertionError('Grid detection must not run during color postprocessing')
+    result = pixelize(enlarged(truth_image(rgba=True)))
+    monkeypatch.setattr(pipeline, 'detect_grid', fail)
+    expected = process_colors(result.native_image, colors=5, palette='MARD24')
+    assert expected.image.size == result.image.size
+    np.testing.assert_array_equal(process_colors(result.native_image).image, result.image)
+
+
+def test_pipeline_color_layer_matches_standalone_and_grid():
+    source = enlarged(truth_image(rgba=True))
+    base = pixelize(source)
+    colored = pixelize(source, Config(colors=5, palette='MARD24', color_mode='rgb'))
+    assert colored.grid == base.grid
+    np.testing.assert_array_equal(colored.native_image, base.image)
+    expected = process_colors(base.image, colors=5, palette='MARD24', color_mode='rgb')
+    np.testing.assert_array_equal(colored.image, expected.image)
+
+
+@pytest.mark.parametrize('kwargs', [{'palette': 'UNKNOWN'}, {'color_mode': 'lab'}, {'colors': 513}, {'colors': True}])
+def test_invalid_color_options(kwargs):
+    with pytest.raises(ValueError):
+        Config(**kwargs)
+    with pytest.raises(ValueError):
+        process_colors(Image.new('RGB', (1, 1)), **kwargs)
+
+
+def test_transparent_and_large_color_budgets():
+    for colors in [1, 257, 436, 437, 512]:
+        Config(colors=colors)
+        result = process_colors(Image.new('RGBA', (4, 3), (255, 40, 20, 0)), colors=colors, palette='DMC436')
+        assert result.diagnostics['output_colors'] == 0
+        assert not np.any(result.image)
+
+
+def test_512_color_limit_preserves_alpha_and_dimensions():
+    indices = np.arange(600)
+    rgba = np.column_stack((indices % 256, (indices // 256) * 80,
+                            (indices * 31) % 256, 128 + indices % 128)).astype(np.uint8).reshape(24, 25, 4)
+    source = Image.fromarray(rgba)
+    assert len(np.unique(rgba[..., :3].reshape(-1, 3), axis=0)) > 512
+    result = process_colors(source, colors=512, color_mode='rgb')
+    assert result.image.size == source.size
+    assert 1 < result.diagnostics['output_colors'] <= 512
+    np.testing.assert_array_equal(np.array(result.image)[..., 3], rgba[..., 3])
+    np.testing.assert_array_equal(process_colors(source).image, source)
+
+
+def test_cli_default_library_and_color_options(tmp_path):
+    source = tmp_path / 'input.png'; make_input(source)
+    output = tmp_path / 'result.png'
+    completed = invoke('-i', source, '-o', output, '--palette', '--colors', '8', '--color-mode', 'rgb', cwd=tmp_path)
+    assert completed.returncode == 0, completed.stderr
+    assert 'palette=DMC436' in completed.stdout
+    visible = np.array(Image.open(output)).reshape(-1, 3)
+    assert len(np.unique(visible, axis=0)) <= 8
+    assert set(map(tuple, visible)).issubset(set(map(tuple, palette_rgb('DMC436'))))
+    assert {p.name for p in tmp_path.iterdir()} == {'input.png', 'result.png'}
 
 
 # COMPARISON INPUT HANDLING
@@ -120,11 +307,12 @@ def test_partial_fragments_have_consistent_rule():
     np.testing.assert_array_equal(make_lines(17,8,0),[0,8,17])
 
 
-def test_target_count_remains_exact_under_phase_shift():
+def test_automatic_phase_shift_adds_partial_edge_cells():
     image,_=random_grid()
     image=np.roll(image,2,axis=1)
-    grid,_=detect(image,Config(target_size=(12,10)))
-    assert len(grid.x_lines)==13 and len(grid.y_lines)==11
+    grid,_=detect(image)
+    assert len(grid.x_lines)==14 and len(grid.y_lines)==11
+    assert grid.phase_x == pytest.approx(2.)
     assert grid.x_lines[0]==0 and grid.x_lines[-1]==image.shape[1]
     assert np.all(np.diff(grid.x_lines)>0)
 
@@ -150,7 +338,6 @@ def test_equal_luminance_colour_edges_remain_visible():
 def test_flat_and_transparent_images_have_no_automatic_grid():
     for image in (np.ones((64,64,4),np.float32),np.zeros((64,64,4),np.float32)):
         assert detect(image)[0] is None
-        assert detect(image,Config(pixel_size=8))[0] is not None
 
 
 def test_missing_same_colour_boundaries_still_find_base_scale():
@@ -165,20 +352,17 @@ def test_local_walk_recovers_bounded_drift_without_crossing():
     widths=np.tile([8,9,8,7],4)
     heights=np.tile([8,9,8,7],4)[:14]
     image=np.repeat(np.repeat(truth,heights,0),widths,1)
-    grid,_=detect(image,Config(pixel_size=8))
+    grid,_=detect(image)
     assert grid.warped
     np.testing.assert_allclose(grid.x_lines,np.r_[0,np.cumsum(widths)])
     np.testing.assert_allclose(grid.y_lines,np.r_[0,np.cumsum(heights)])
     assert np.all(np.diff(grid.x_lines)>0)
 
 
-def test_noninteger_manual_grid_and_repeatability():
-    image,_=random_grid()
-    config=Config(pixel_size=(7.5,8.25),local_warp="off")
-    a,ar=detect(image,config); b,br=detect(image,config)
-    assert a.sx==7.5 and a.sy==8.25
-    np.testing.assert_array_equal(a.x_lines,b.x_lines)
-    assert ar==br
+@pytest.mark.parametrize("removed", [{"pixel_size": 8}, {"target_size": (12, 10)}])
+def test_manual_grid_options_are_removed_from_api(removed):
+    with pytest.raises(TypeError, match="unexpected keyword"):
+        Config(**removed)
 
 
 def test_noninteger_automatic_spacing_with_raster_rounding():
@@ -295,7 +479,7 @@ def test_hidden_rgb_does_not_consume_palette_budget():
     np.testing.assert_array_equal(quantize_cells(cells,2).rgba,cells.rgba)
 
 
-@pytest.mark.parametrize("colors",[0,-1,257,2.5,True])
+@pytest.mark.parametrize("colors",[0,-1,513,2.5,True])
 def test_invalid_palette(colors):
     cells=recover_cells(np.ones((2,2,4),np.float32),[0,2],[0,2])
     with pytest.raises(ValueError):
@@ -348,9 +532,9 @@ def test_clean_automatic_grid_dimensions_and_colors():
     assert result.timings and all(value >= 0 for value in result.timings.values())
 
 
-def test_target_size_and_nearest_neighbor_export(tmp_path):
+def test_automatic_grid_and_nearest_neighbor_export(tmp_path):
     truth = truth_image(8, 6)
-    result = pixelize(enlarged(truth, 7), Config(target_size=truth.size))
+    result = pixelize(enlarged(truth, 7), Config())
     assert result.image.size == (8, 6)
     destination = tmp_path / "enlarged.png"
     save_result(result, destination, scale=4)
@@ -363,7 +547,7 @@ def test_target_size_and_nearest_neighbor_export(tmp_path):
 def test_seed_free_repeatability():
     truth = truth_image(9, 7)
     image = enlarged(truth, 9).filter(ImageFilter.GaussianBlur(0.45))
-    config = Config(target_size=truth.size, colors=5)
+    config = Config(colors=5)
     first = pixelize(image, config)
     second = pixelize(image, config)
     np.testing.assert_array_equal(np.asarray(first.image), np.asarray(second.image))
@@ -377,8 +561,8 @@ def test_fully_transparent_hidden_rgb_does_not_change_result():
     changed = clean.copy()
     mask = changed[..., 3] == 0
     changed[mask, :3] = np.random.default_rng(91).integers(0, 256, (mask.sum(), 3), dtype=np.uint8)
-    first = pixelize(clean, Config(target_size=truth.size))
-    second = pixelize(changed, Config(target_size=truth.size))
+    first = pixelize(clean, Config())
+    second = pixelize(changed, Config())
     a, b = np.asarray(first.image), np.asarray(second.image)
     np.testing.assert_array_equal(a, b)
     np.testing.assert_array_equal(a[..., 3] == 0, np.asarray(truth)[..., 3] == 0)
@@ -392,8 +576,10 @@ def test_single_pixel_line_highlight_and_hole_are_not_removed():
     data[7, 2:8] = [235, 50, 65, 255]
     data[3, 8] = [255, 250, 225, 255]
     data[5, 5] = [0, 0, 0, 0]
-    result = pixelize(enlarged(Image.fromarray(data)), Config(target_size=(11, 11)))
-    out = np.asarray(result.image)
+    # Isolate sampling with known cell bounds; sparse shapes need not identify a unique grid.
+    source = load_image(enlarged(Image.fromarray(data))).rgba
+    cells = recover_cells(source, np.arange(12) * 8, np.arange(12) * 8)
+    out = np.asarray(to_pil(cells.rgba))
     assert np.max(np.abs(out[1:10, 2, :3].astype(int) - data[1:10, 2, :3])) <= 2
     assert np.max(np.abs(out[3, 8, :3].astype(int) - data[3, 8, :3])) <= 2
     assert out[5, 5, 3] == 0
@@ -408,8 +594,8 @@ def test_robust_sampling_resists_center_impulses_better_than_center():
     target = np.asarray(truth).astype(float)
     errors = {}
     for sampling in ("center", "median", "robust"):
-        result = pixelize(image, Config(target_size=truth.size, sampling=sampling, local_warp="off"))
-        errors[sampling] = np.mean(np.abs(np.asarray(result.image).astype(float) - target))
+        cells = recover_cells(load_image(image).rgba, np.arange(9) * 9, np.arange(7) * 9, sampling)
+        errors[sampling] = np.mean(np.abs(np.asarray(to_pil(cells.rgba, False)).astype(float) - target))
     assert errors["robust"] < errors["center"] * 0.25, errors
     assert errors["robust"] < 5, errors
 
@@ -469,7 +655,7 @@ def test_degraded_or_ambiguous_inputs_report_diagnostics_and_remain_valid(kind):
 
 def test_numpy_float_and_pillow_inputs_agree():
     image = enlarged(truth_image(6, 5))
-    config = Config(target_size=(6, 5))
+    config = Config()
     as_pillow = pixelize(image, config)
     as_float = pixelize(np.asarray(image, dtype=np.float32) / 255, config)
     np.testing.assert_array_equal(np.asarray(as_pillow.image), np.asarray(as_float.image))
@@ -495,7 +681,7 @@ def test_invalid_configuration_is_rejected(values):
 
 def test_palette_budget_counts_visible_colors_only():
     truth = truth_image(9, 7, rgba=True)
-    result = pixelize(enlarged(truth), Config(target_size=truth.size, colors=3))
+    result = pixelize(enlarged(truth), Config(colors=3))
     data = np.asarray(result.image)
     assert data.shape[2] == 4
     colors = np.unique(data[data[..., 3] > 0, :3], axis=0)
@@ -506,15 +692,16 @@ def test_palette_budget_counts_visible_colors_only():
 def test_semitransparent_alpha_and_straight_color_survive_clean_recovery():
     data = np.asarray(truth_image(6, 4, rgba=True)).copy()
     data[2:, 2:, 3] = np.array([[64, 128, 192, 255], [255, 192, 128, 64]], np.uint8)
-    result = pixelize(enlarged(Image.fromarray(data)), Config(target_size=(6, 4)))
-    out = np.asarray(result.image)
+    source = load_image(enlarged(Image.fromarray(data))).rgba
+    cells = recover_cells(source, np.arange(7) * 8, np.arange(5) * 8)
+    out = np.asarray(to_pil(cells.rgba))
     visible = data[..., 3] > 0
     assert np.abs(out[..., 3].astype(int) - data[..., 3]).max() <= 1
     assert np.abs(out[visible, :3].astype(int) - data[visible, :3]).max() <= 2
 
 
-def test_conflicting_target_aspect_ratio_is_explicitly_rejected():
-    with pytest.raises(ValueError, match="aspect ratio"):
+def test_removed_target_size_is_rejected():
+    with pytest.raises(TypeError, match="target_size"):
         pixelize(Image.new("RGB", (80, 60)), Config(target_size=(8, 8)))
 
 
@@ -525,10 +712,10 @@ def test_exif_orientation():
 
 
 @pytest.mark.parametrize("kwargs",[{"pixel_size":0},{"pixel_size":float("nan")},{"scale":0},
-    {"target_size":(0,4)},{"colors":257},{"max_pixel_size":1},{"sampling":"bad"},
+    {"target_size":(0,4)},{"colors":513},{"max_pixel_size":1},{"sampling":"bad"},
     {"local_warp":"bad"},{"pixel_size":4,"target_size":(8,8)}])
 def test_bad_config(kwargs):
-    with pytest.raises(ValueError): Config(**kwargs)
+    with pytest.raises((ValueError, TypeError)): Config(**kwargs)
 
 
 def test_bad_float_image():
@@ -541,17 +728,18 @@ def test_constant_fallback_still_honors_palette_request():
     assert np.asarray(result.image).sum()==0
 
 
-def test_square_target_does_not_silently_use_rectangular_spacing():
-    with pytest.raises(ValueError,match="square"):
-        pixelize(Image.new("RGB",(80,81)),Config(target_size=(10,10),square=True))
+def test_square_automatic_grid_uses_equal_nominal_spacing():
+    source, _ = random_grid()
+    grid, _ = detect(source, Config(square=True))
+    assert grid.sx == grid.sy == 8.
 
 
 @pytest.mark.parametrize("size",[(17,19),(18,20),(1,1),(1,5)])
 def test_debug_bundle_even_odd_tiny_and_fallback(tmp_path,size):
     import json
     result=pixelize(Image.new("RGBA",size,(40,80,120,0)))
-    save_result(result,tmp_path/"sprite.png")
-    debug=tmp_path/"sprite_debug"
+    save_result(result,tmp_path/"sprite.png",debug=True)
+    debug=tmp_path/"debug"/"sprite"
     assert {p.name for p in debug.iterdir()}=={"fft.png","edges.png","grid.png","profiles.png","curvature.png","info.json","info.txt"}
     report=json.loads((debug/"info.json").read_text(encoding="utf-8"))
     assert report["grid"]["output_size"]==list(size)
@@ -573,8 +761,8 @@ def test_pipeline_and_export_need_no_scipy_opencv_or_matplotlib(tmp_path,monkeyp
     truth[...,3]=255
     result=pixelize(truth.repeat(8,0).repeat(8,1))
     assert result.image.size==(9,8)
-    save_result(result,tmp_path/"minimal.png")
-    assert (tmp_path/"minimal_debug"/"fft.png").is_file()
+    save_result(result,tmp_path/"minimal.png",debug=True)
+    assert (tmp_path/"debug"/"minimal"/"fft.png").is_file()
 
 
 # CLI
@@ -598,24 +786,24 @@ def make_input(path):
     return low
 
 
-def test_cli_always_creates_result_and_diagnostics(tmp_path):
+def test_cli_default_creates_only_result(tmp_path):
     source = tmp_path / "input.png"
     truth = make_input(source)
     output = tmp_path / "result.png"
     completed = invoke("-i", source, "-o", output, cwd=tmp_path)
     assert completed.returncode == 0, completed.stderr
     assert "grid=" in completed.stdout and "pixel spacing=" in completed.stdout
-    assert {p.name for p in tmp_path.iterdir()} == {"input.png", "result.png", "result_debug"}
+    assert {p.name for p in tmp_path.iterdir()} == {"input.png", "result.png"}
     with Image.open(output) as result:
         assert result.format == "PNG"
         assert result.size == truth.size
 
 
-def test_cli_target_size_and_scale(tmp_path):
+def test_cli_automatic_grid_and_scale(tmp_path):
     source = tmp_path / "input.png"
     make_input(source)
     output = tmp_path / "result.png"
-    completed = invoke("-i", source, "-o", output, "--target-size", "8x6", "--scale", "4", cwd=tmp_path)
+    completed = invoke("-i", source, "-o", output, "--scale", "4", cwd=tmp_path)
     assert completed.returncode == 0, completed.stderr
     with Image.open(output) as result:
         assert result.size == (32, 24)
@@ -628,15 +816,15 @@ def test_cli_explicit_debug_and_verbose(tmp_path):
     make_input(source)
     output = tmp_path / "result.png"
     debug = tmp_path / "debug"
-    completed = invoke("-i", source, "-o", output, "--target-size", "8x6", "--debug-dir", debug,
-                       "--verbose", cwd=tmp_path)
+    completed = invoke("-i", source, "-o", output, "--debug-dir", debug,
+                       "--debug", "--verbose", cwd=tmp_path)
     assert completed.returncode == 0, completed.stderr
     assert list(debug.glob("*.json")), list(debug.iterdir())
     assert len(list(debug.glob("*.png"))) >= 2
     assert completed.stderr.strip()
 
 
-def test_cli_rejects_mutually_exclusive_constraints(tmp_path):
+def test_cli_rejects_removed_grid_constraints(tmp_path):
     source = tmp_path / "input.png"
     make_input(source)
     completed = invoke("-i", source, "-o", tmp_path / "out.png", "--pixel-size", "8",
@@ -666,11 +854,13 @@ def test_cli_constant_input_warns_and_still_writes(tmp_path):
         assert result.size == (31, 29)
 
 
-def test_cli_noninteger_pixel_size_is_accepted(tmp_path):
+def test_cli_removed_pixel_size_is_rejected(tmp_path):
     source = tmp_path / "input.png"
     make_input(source)
     completed = invoke("-i", source, "-o", tmp_path / "result.png", "--pixel-size", "8.0x8.0", cwd=tmp_path)
-    assert completed.returncode == 0, completed.stderr
+    assert completed.returncode != 0
+    assert "unrecognized arguments" in completed.stderr
+    assert not (tmp_path / "result.png").exists()
 
 
 def test_cli_alpha_policy_and_diagnostic_report(tmp_path):
@@ -679,14 +869,16 @@ def test_cli_alpha_policy_and_diagnostic_report(tmp_path):
     Image.new("RGBA", (16, 16), (20, 30, 40, 180)).save(source)
     for mode, expected in [("binary", 255), ("coverage", 180)]:
         target = tmp_path / (mode + ".png")
-        completed = invoke("-i", source, "-o", target, "--alpha-mode", mode, cwd=tmp_path)
+        debug = tmp_path / "debug" / mode
+        completed = invoke("-i", source, "-o", target, "--alpha-mode", mode,
+                           "--debug", "--debug-dir", debug, cwd=tmp_path)
         assert completed.returncode == 0, completed.stderr
         assert np.all(np.asarray(Image.open(target))[..., 3] == expected)
-        info = json.loads((tmp_path / (mode + "_debug") / "info.json").read_text(encoding="utf-8"))
+        info = json.loads((debug / "info.json").read_text(encoding="utf-8"))
         assert info["diagnostics"]["structure"]["alpha_mode"] == mode
 
 
-def test_input_only_writes_named_png_and_debug_to_project_output(tmp_path,monkeypatch):
+def test_input_only_writes_named_png_and_opt_in_debug_to_project_output(tmp_path,monkeypatch):
     import json
     import pixelperfect.__main__ as cli
     project=tmp_path/"checkout"
@@ -698,11 +890,40 @@ def test_input_only_writes_named_png_and_debug_to_project_output(tmp_path,monkey
     assert cli.main(["-i",str(source)])==0
     target=project/"output"/"my sprite.png"
     assert target.is_file()
-    debug=target.with_name("my sprite_debug")
+    assert list((project/"output").iterdir()) == [target]
+    before = target.read_bytes()
+    assert cli.main(["-i",str(source),"--debug"])==0
+    assert target.read_bytes() == before
+    debug=project/"output"/"debug"/"my sprite"
     assert (debug/"fft.png").is_file() and (debug/"edges.png").is_file()
     info=json.loads((debug/"info.json").read_text(encoding="utf-8"))
     assert info["grid"]["output_size"]==list(Image.open(target).size)
     assert info["export"]["path"]==str(target)
+
+
+def test_save_result_default_skips_debug_writer(tmp_path, monkeypatch):
+    import pixelperfect.diagnostics as diagnostics
+    def unexpected(*args, **kwargs):
+        raise AssertionError("Debug export must be opt-in")
+    monkeypatch.setattr(diagnostics, "write_debug", unexpected)
+    result = pixelize(Image.new("RGB", (8, 8), "red"))
+    save_result(result, tmp_path / "result.png")
+    assert [p.name for p in tmp_path.iterdir()] == ["result.png"]
+    assert "debug_images" not in result.timings
+    assert result.timings["total_with_export"] >= result.timings["total"]
+
+
+def test_debug_directory_requires_explicit_flag(tmp_path):
+    result = pixelize(Image.new("RGB", (8, 8), "red"))
+    with pytest.raises(ValueError, match="requires debug"):
+        save_result(result, tmp_path / "result.png", debug_dir=tmp_path / "debug")
+    source = tmp_path / "input.png"
+    make_input(source)
+    completed = invoke("-i", source, "-o", tmp_path / "result.png",
+                       "--debug-dir", tmp_path / "debug", cwd=tmp_path)
+    assert completed.returncode != 0
+    assert "requires --debug" in completed.stderr
+    assert not (tmp_path / "result.png").exists()
 
 
 def test_cli_never_overwrites_source(tmp_path):
@@ -793,14 +1014,42 @@ def test_hidden_rgb_never_changes_alpha_or_contour_color(mode):
     np.testing.assert_array_equal(a.rgba, b.rgba)
 
 
-def test_api_default_and_explicit_coverage_are_distinct_and_repeatable():
+def test_sparse_edge_fallback_is_repeatable_without_inventing_alpha():
     source = Image.fromarray(np.rint(outlined_edge() * 255).astype(np.uint8))
-    config = Config(target_size=(3, 2))
+    config = Config()
     a, b = pixelize(source, config), pixelize(source, config)
     np.testing.assert_array_equal(np.asarray(a.image), np.asarray(b.image))
     assert set(np.unique(np.asarray(a.image)[..., 3])) == {0, 255}
-    soft = pixelize(source, Config(target_size=(3, 2), alpha_mode="coverage"))
-    assert np.any((np.asarray(soft.image)[..., 3] > 0) & (np.asarray(soft.image)[..., 3] < 255))
+    soft = pixelize(source, Config(alpha_mode="coverage"))
+    assert a.grid["fallback"] and soft.grid["fallback"]
+    np.testing.assert_array_equal(np.asarray(soft.image), np.asarray(source))
+
+
+@pytest.mark.parametrize("scale", range(1, 17))
+def test_export_all_integer_scales_without_recovery(tmp_path, monkeypatch, scale):
+    import pixelperfect.pipeline as pipeline
+    result = pixelize(enlarged(truth_image(8, 7, rgba=True)))
+    native = np.asarray(result.image).copy()
+    original_grid = dict(result.grid)
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Export must not run grid detection")
+    monkeypatch.setattr(pipeline, "detect_grid", forbidden)
+    destination = tmp_path / "scaled.png"
+    export_png(result.image, destination, scale)
+    with Image.open(destination) as saved:
+        np.testing.assert_array_equal(np.asarray(saved), native.repeat(scale, 0).repeat(scale, 1))
+    np.testing.assert_array_equal(np.asarray(result.image), native)
+    assert result.grid == original_grid
+    assert Config(scale=scale).scale == scale
+
+
+@pytest.mark.parametrize("scale", [0, 17, 64, -1, True, 1.5])
+def test_export_and_config_reject_invalid_multiplier(tmp_path, scale):
+    with pytest.raises(ValueError, match="1 to 16"):
+        Config(scale=scale)
+    with pytest.raises(ValueError, match="1 to 16"):
+        export_png(Image.new("RGBA", (2, 2)), tmp_path / "invalid.png", scale)
+    assert not (tmp_path / "invalid.png").exists()
 
 
 def test_invalid_alpha_mode():
@@ -818,3 +1067,99 @@ def test_explicit_binary_mode_also_applies_when_no_grid_exists():
     assert np.all(np.asarray(result.image)[..., 3] == 255)
     preserved = pixelize(source, Config(alpha_mode="coverage"))
     np.testing.assert_array_equal(np.asarray(preserved.image), np.asarray(source))
+
+
+# NATIVE-RESOLUTION REGRESSIONS: no filenames, metadata, size cutoff or color hints.
+def native_scene(seed=0):
+    from PIL import ImageDraw
+    rng = np.random.default_rng(seed)
+    image = Image.new('RGBA', (67, 57), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((3, 3, 63, 53), fill=(31, 45, 65, 255))
+    draw.rectangle((5, 5, 61, 51), fill=(172, 198, 185, 255))
+    colors = [(236, 100, 95, 255), (244, 211, 108, 255), (69, 147, 191, 255)]
+    for y in range(9, 48, 10):
+        for x in range(9, 59, 10):
+            draw.rectangle((x-2, y-2, x+5, y+5), fill=(31, 45, 65, 255))
+            draw.rectangle((x-1, y-1, x+4, y+4), fill=colors[int(rng.integers(3))])
+            draw.line((x+1, y-1, x+1, y+4), fill=(31, 45, 65, 255))
+            draw.line((x-1, y+1, x+4, y+1), fill=(31, 45, 65, 255))
+            draw.point((x+3, y), fill=(255, 255, 241, 255))
+    draw.rectangle((28, 45, 37, 53), fill=(31, 45, 65, 255))
+    draw.point((30, 48), fill=(255, 230, 170, 255))
+    draw.point((55, 40), fill=(0, 0, 0, 0))
+    return image
+
+
+@pytest.mark.parametrize('name', ['bocchi.png','bocchi2.png','chito.png','hollow-knight-sprite.png','lastTour.png','ritsu.png'])
+def test_actual_recovered_image_is_not_downsampled_again(name, tmp_path):
+    root = Path(__file__).resolve().parents[2]
+    first = pixelize(root/'input'/name)
+    # Reencode pixels without any provenance metadata and change the filename.
+    source = tmp_path/'unrelated-name.png'
+    Image.fromarray(np.array(first.image)).save(source)
+    with Image.open(source) as image:
+        assert not image.info
+    second = pixelize(source)
+    assert second.grid['sx'] == second.grid['sy'] == 1
+    assert second.grid['native_preserved']
+    assert second.grid['source'] == 'native pixel detail'
+    np.testing.assert_array_equal(first.image, second.image)
+    assert second.diagnostics['grid_search']['rejected_coarse_grid'] is not None
+
+
+@pytest.mark.parametrize('factor', [2, 3, 4, 8])
+def test_real_native_image_enlarged_still_restores_exact_pixels(factor):
+    root = Path(__file__).resolve().parents[2]
+    native = pixelize(root/'input/bocchi2.png').image
+    result = pixelize(enlarged(native, factor))
+    assert result.image.size == native.size
+    assert not result.grid['native_preserved']
+    np.testing.assert_array_equal(result.image, native)
+
+
+@pytest.mark.parametrize('seed', [7, 18, 29])
+@pytest.mark.parametrize('sampling', ['robust', 'center', 'median'])
+def test_meaningful_native_scene_preserves_lines_windows_and_highlights(seed, sampling):
+    image = native_scene(seed)
+    result = pixelize(image, Config(sampling=sampling))
+    assert result.image.size == image.size
+    np.testing.assert_array_equal(result.image, image)
+
+
+def test_native_decision_is_not_a_small_image_cutoff():
+    native = np.array(native_scene(18))
+    # Periodic buildings covering a large canvas must retain their one-pixel bars.
+    large = np.tile(native, (12, 13, 1))
+    result = pixelize(large)
+    assert result.image.size == (large.shape[1], large.shape[0])
+    np.testing.assert_array_equal(result.image, large)
+
+
+def test_exact_two_pixel_crop_and_transparent_rgb():
+    source = np.array(enlarged(native_scene(7), 2))[1:-1, 1:-1].copy()
+    source[source[..., 3] == 0, :3] = [255, 0, 197]
+    result = pixelize(source)
+    assert result.grid['sx'] == result.grid['sy'] == 2
+    assert result.grid['phase_x'] == result.grid['phase_y'] == 1
+    # Every source region is constant: reconstructing it must be byte-exact.
+    reconstructed = np.repeat(np.repeat(np.asarray(result.image),
+        np.diff(result.grid['y_lines']), axis=0), np.diff(result.grid['x_lines']), axis=1)
+    source[source[..., 3] == 0, :3] = 0
+    np.testing.assert_array_equal(reconstructed, source)
+
+
+def test_native_preservation_still_allows_color_postprocessing_and_export(tmp_path):
+    image = native_scene(29)
+    result = pixelize(image, Config(colors=8, palette='MARD24'))
+    assert result.image.size == image.size
+    np.testing.assert_array_equal(result.native_image, image)
+    expected = process_colors(image, colors=8, palette='MARD24').image
+    np.testing.assert_array_equal(result.image, expected)
+    save_result(result, tmp_path/'native.png', scale=3, debug=True)
+    with Image.open(tmp_path/'native.png') as exported:
+        np.testing.assert_array_equal(exported, np.array(expected).repeat(3,0).repeat(3,1))
+    import json
+    info = json.loads((tmp_path/'debug/native/info.json').read_text(encoding='utf-8'))
+    assert info['grid']['native_preserved']
+    assert info['diagnostics']['grid_search']['native_resolution']['selected']

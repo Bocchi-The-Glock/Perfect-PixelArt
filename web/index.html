@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f7f5">
+  <meta name="description" content="Perfect PixelArt Plus — local pixel art recovery.">
+  <title>Perfect PixelArt Plus</title>
+  <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./app.js" type="module"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./">Perfect PixelArt <span>Plus</span></a>
+    <div class="top-actions">
+      <button id="theme-toggle" class="icon-button" type="button" aria-label="切换夜间模式" title="切换夜间模式">
+        <svg class="moon-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 13A9 9 0 0 1 11 3.2 9 9 0 1 0 20.8 13Z"/></svg>
+        <svg class="sun-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>
+      </button>
+      <button id="language-toggle" class="icon-button language-button" type="button" aria-label="Switch to English" title="Switch to English"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h12M9 2v3m4 0c-1 6-4 9-9 12m2-9c1 4 4 7 8 9m1 4 4-11 4 11m-6-4h4"/></svg><span id="language-label">EN</span></button>
+    </div>
+  </header>
+  <main>
+    <section class="preview-section" data-i18n-aria="previews">
+      <div class="preview-toolbar">
+        <label><span data-i18n="background">预览背景</span><select id="background" data-i18n-aria="background"><option value="checker" data-i18n="checker">透明棋盘</option><option value="white" data-i18n="white">纯白</option><option value="dark" data-i18n="darkBackground">深色</option></select></label>
+      </div>
+      <div class="preview-grid">
+        <article class="preview-panel">
+          <div class="panel-heading"><h1 data-i18n="original">原图</h1><span id="original-size">—</span></div>
+          <div class="image-stage checker" id="original-stage" role="button" tabindex="0" data-i18n-aria="choose" aria-disabled="false" data-i18n-title="replace">
+            <div class="placeholder" id="original-placeholder"><span class="upload-icon" aria-hidden="true">＋</span><strong data-i18n="choose">点击或拖入图片</strong></div>
+            <img id="original-image" data-i18n-alt="original" draggable="false" hidden>
+          </div>
+          <div class="panel-footer"><span id="original-label">未选择图片</span><div><button id="sample" type="button" class="text-button" data-i18n="sample">示例</button><button id="clear-file" type="button" class="text-button" data-i18n="remove" hidden>移除</button></div></div>
+          <div class="zoom-controls">
+            <label for="original-zoom" data-i18n="zoom">缩放</label><input id="original-zoom" type="range" min="0" max="1000" value="500" step="1" disabled><output id="original-zoom-value" for="original-zoom">—</output><button id="original-fit" type="button" class="text-button" data-i18n="fit">适应窗口</button>
+          </div>
+          <div class="panel-actions"><button class="run-button" id="run" type="submit" form="settings" disabled>生成</button><button class="cancel-button" id="cancel" type="button" data-i18n="cancel" hidden>取消</button></div>
+        </article>
+        <article class="preview-panel result-panel">
+          <div class="panel-heading"><h2 data-i18n="restored">恢复结果</h2><span id="result-size">—</span></div>
+          <div class="image-stage checker" id="result-stage"><div class="placeholder" id="result-placeholder"><span data-i18n="waiting">等待生成</span></div><img id="result-image" data-i18n-alt="restored" draggable="false" hidden></div>
+          <div class="panel-footer"><span id="result-label">—</span><span>PNG</span></div>
+          <div class="zoom-controls">
+            <label for="result-zoom" data-i18n="zoom">缩放</label><input id="result-zoom" type="range" min="0" max="1000" value="500" step="1" disabled><output id="result-zoom-value" for="result-zoom">—</output><button id="result-fit" type="button" class="text-button" data-i18n="fit">适应窗口</button>
+          </div>
+          <div class="export-settings">
+            <label for="scale"><span data-i18n="exportScale">导出倍数</span><output id="scale-value" for="scale">1×</output></label>
+            <div class="range-row"><span>1×</span><input id="scale" type="range" min="1" max="16" step="1" value="1"><span>16×</span></div>
+          </div>
+          <div class="panel-actions"><button id="download" type="button" class="download-button" aria-disabled="true" disabled data-i18n="download">下载 PNG</button><a id="download-debug" class="secondary-download" data-i18n="debugZip" hidden>诊断 ZIP</a></div>
+        </article>
+      </div>
+      <input id="file-input" type="file" accept="image/png,image/jpeg,image/webp,image/bmp,image/tiff,image/gif" hidden>
+      <div class="result-summary" id="result-summary" hidden>
+        <div><span data-i18n="nativeGrid">原生网格</span><strong id="metric-grid">—</strong></div>
+        <div><span data-i18n="spacing">源图格距</span><strong id="metric-spacing">—</strong></div>
+        <div><span data-i18n="confidence" data-i18n-title="confidenceHelp">启发式置信分数</span><strong id="metric-confidence">—</strong></div>
+        <div><span data-i18n="time">处理耗时</span><strong id="metric-time">—</strong></div>
+      </div>
+    </section>
+    <section class="controls" data-i18n-aria="parameters">
+      <form id="settings">
+        <fieldset id="settings-fields">
+          <div class="section-title"><h2 data-i18n="parameters">参数</h2><button class="text-button" id="reset" type="button" data-i18n="reset">重置</button></div>
+          <div class="basic-settings">
+            <label><span data-i18n="sampling">取色方式</span><select id="sampling"><option value="robust" data-i18n="robust">稳健取色 · 中心优先</option><option value="center" data-i18n="center">中心采样</option><option value="median" data-i18n="median">中值采样</option></select></label>
+            <label><span data-i18n="alpha">透明度</span><select id="alpha-mode"><option value="auto" data-i18n="alphaAuto">保留采样透明度</option><option value="coverage" data-i18n="coverage">按区域覆盖率平均</option><option value="binary" data-i18n="binary">二值透明度</option></select></label>
+            <label><span data-i18n="warp">局部网格调整</span><select id="local-warp"><option value="auto" data-i18n="auto">自动</option><option value="off" data-i18n="off">关闭</option></select></label>
+          </div>
+          <div class="check-settings"><label class="check"><input id="square" type="checkbox"><span data-i18n="square">强制正方形网格</span></label><label class="check"><input id="debug" type="checkbox" checked><span data-i18n="debug">生成处理过程</span></label></div>
+          <details class="advanced"><summary data-i18n="more">更多设置</summary><div class="advanced-settings">
+            <label><span data-i18n="minSpacing">最小间距</span><input id="min-size" type="number" min="1" step="any" value="2"></label>
+            <label><span data-i18n="maxSpacing">最大间距</span><input id="max-size" type="number" min="1" step="any" value="64"></label>
+          </div></details>
+        </fieldset>
+      </form>
+      <form id="color-settings" class="color-settings">
+        <fieldset id="color-fields">
+          <div class="section-title"><h2 data-i18n="colorPost">颜色处理（可选）</h2><span id="color-summary" class="field-hint"></span></div>
+          <div class="basic-settings">
+            <div class="color-limit">
+              <label for="colors"><span data-i18n="colors">限定颜色数量</span><output id="colors-value" for="colors">不限制</output></label>
+              <div class="color-track">
+                <input id="colors" type="range" min="0" max="1000" step="1" value="0" aria-valuetext="不限制">
+                <div class="color-stops" aria-hidden="true"><span class="unlimited-stop"><i></i><span data-i18n="keepColors">不限制</span></span><span class="minimum-stop"><i></i>2</span><span class="maximum-stop"><i></i><span id="colors-max">512</span></span></div>
+              </div>
+            </div>
+            <label class="check"><input id="use-palette" type="checkbox"><span data-i18n="usePalette">使用色库</span></label>
+            <label><span data-i18n="palette">色库</span><select id="palette" disabled></select></label>
+            <label><span data-i18n="colorMode">颜色模式</span><select id="color-mode"><option value="natural" data-i18n="natural">自然</option><option value="rgb">RGB</option></select></label>
+          </div>
+          <p id="palette-note" class="field-hint" hidden></p>
+          <p class="field-hint" data-i18n="colorHelp">在恢复结果上调整，无需重新识别网格。</p>
+        </fieldset>
+      </form>
+    </section>
+    <div class="status-strip" role="status" aria-live="polite"><span class="status-icon" id="status-icon">○</span><span id="status">请选择图片。</span></div>
+    <div class="warning-box" id="warnings" hidden role="alert"></div>
+    <details class="diagnostics" id="diagnostics" hidden><summary data-i18n="diagnostics">处理过程</summary><div id="diagnostic-tabs" class="diagnostic-tabs"></div><div class="diagnostic-preview"><img id="diagnostic-image" alt=""></div></details>
+  </main>
+  <noscript>Please enable JavaScript / 请启用 JavaScript。</noscript>
+</body>
+</html>
