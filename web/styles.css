@@ -42,13 +42,14 @@ main > .status-strip, main > .warning-box, main > .diagnostics { grid-column: 2;
 .preview-toolbar label { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .preview-toolbar select { width: auto; margin: 0; height: 30px; font-size: 12px; }
 .preview-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
-.preview-panel { --preview-gain: 40px; min-width: 0; overflow: hidden; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; display: flex; flex-direction: column; }
+.preview-panel { --preview-gain: 120px; min-width: 0; overflow: hidden; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; display: flex; flex-direction: column; }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; padding: 13px 16px; border-bottom: 1px solid var(--line); gap: 8px; min-height: 46px; }
 .panel-heading h1, .panel-heading h2 { margin: 0; font-size: 14px; font-weight: 600; }
 .panel-heading > span { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .image-viewport { position: relative; flex-shrink: 0; }
-.image-stage { height: calc(clamp(280px, 48vh, 600px) + var(--preview-gain)); overflow: auto; overscroll-behavior: contain; display: flex; position: relative; padding: 12px; }
-.image-stage img { image-rendering: pixelated; display: block; margin: auto; flex-shrink: 0; max-width: none; max-height: none; }
+.image-stage { height: calc(clamp(280px, 48vh, 600px) + var(--preview-gain)); overflow: hidden; overscroll-behavior: contain; display: flex; position: relative; padding: 12px; user-select: none; }
+.image-stage img { image-rendering: pixelated; display: block; position: absolute; top: 0; left: 0; margin: 0; max-width: none; max-height: none; cursor: grab; }
+.image-stage.panning, #original-stage.panning, .image-stage.panning img { cursor: grabbing; }
 #original-stage { cursor: pointer; }
 #original-stage:hover { box-shadow: inset 0 0 0 2px var(--line); }
 #original-stage.dragover { box-shadow: inset 0 0 0 3px var(--accent); }
@@ -141,7 +142,7 @@ input[type="range"] { flex: 1; min-width: 0; margin: 0; accent-color: var(--acce
 @media (max-width: 1050px) {
   main { grid-template-columns: 220px minmax(0, 1fr); column-gap: 12px; padding-inline: 14px; }
   .controls { padding: 15px 12px; }
-  .preview-panel { --preview-gain: 62px; }
+  .preview-panel { --preview-gain: 142px; }
   .run-button, .upload-button { min-width: 92px; padding-inline: 8px; }
 }
 @media (max-width: 760px) {
@@ -153,7 +154,7 @@ input[type="range"] { flex: 1; min-width: 0; margin: 0; accent-color: var(--acce
   .preview-toolbar { gap: 10px; }
   .preview-toolbar label { font-size: 11px; gap: 5px; }
   .preview-grid { gap: 10px; }
-  .preview-panel { --preview-gain: 83px; }
+  .preview-panel { --preview-gain: 123px; }
   .image-stage { height: calc(clamp(220px, 34vh, 320px) + var(--preview-gain)); padding: 6px; }
   .panel-heading { padding: 9px; flex-wrap: wrap; min-height: 58px; align-content: center; gap: 3px; }
   .panel-heading h1, .panel-heading h2 { font-size: 13px; width: 100%; }

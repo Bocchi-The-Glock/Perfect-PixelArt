@@ -1,0 +1,4 @@
+# Python 3.12; numerical/image versions match the verified desktop environment.
+numpy==1.26.4
+Pillow==12.1.0
+pytest==8.4.2

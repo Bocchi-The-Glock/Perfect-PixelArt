@@ -6,7 +6,7 @@ let result = null, stale = false, urls = [], originalUrl = null, downloadUrl = n
 let palettes = [], colorTimer = null, colorDirty = false;
 let colorCount = null, colorMaximum = 512, colorRevision = 0, pendingColorRevision = 0;
 const colorMinimumStop = 200; // Short, distinct stops for Unlimited and 2.
-const views = { original: { factor: null }, result: { factor: null } };
+const views = { original: { factor: null, x: 0, y: 0 }, result: { factor: null, x: 0, y: 0 } };
 let status = { key: 'selectImage', kind: '', values: {} };
 let theme = preference('pp-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 
@@ -26,9 +26,6 @@ function renderState() {
   $('original-placeholder').querySelector('strong').textContent = t(previewUnavailable ? 'previewLater' : 'choose');
   $('scale-value').textContent = `${$('scale').value}×`;
   renderColorLimit();
-  $('result-label').textContent = !result ? '—' : stale ? t('stale') : t('exportSize', {
-    size: result.meta.grid.output_size.map(n => n * Number($('scale').value)).join(' × '),
-  });
   $('status').textContent = t(status.key, status.values);
   if (result?.meta.grid.native_preserved && status.key === 'done') $('status').textContent = t('nativePreserved');
   if (result) $('warnings').textContent = t(result.meta.grid.fallback ? 'fallback' : 'lowConfidence');
@@ -84,14 +81,14 @@ function clearResult() {
   $('diagnostics').hidden = true; $('download-debug').hidden = true;
   $('diagnostic-tabs').replaceChildren(); $('diagnostic-image').removeAttribute('src');
   $('download-debug').removeAttribute('href'); $('result-size').textContent = '—';
-  views.result.factor = null; refreshZoom();
+  Object.assign(views.result, { factor: null, x: 0, y: 0 }); refreshZoom();
   setBusy(false);
 }
 async function useFile(next) {
   if (busy || !next) return;
   if (next.size > 64 * 1024 * 1024) { setStatus('largeFile', 'error'); return; }
   file = next; generation++; clearResult(); previewUnavailable = false;
-  views.original.factor = null;
+  Object.assign(views.original, { factor: null, x: 0, y: 0 });
   if (originalUrl) URL.revokeObjectURL(originalUrl);
   originalUrl = URL.createObjectURL(file);
   $('clear-file').hidden = false;
@@ -111,7 +108,7 @@ function zoomBounds(name) {
   return { fit, min: Math.min(.01, fit / 4), max: Math.max(32, fit * 4) };
 }
 function renderZoom(name) {
-  const image = $(`${name}-image`);
+  const image = $(`${name}-image`), stage = $(`${name}-stage`), view = views[name];
   const unavailable = image.hidden || !image.complete || !image.naturalWidth;
   $(`${name}-zoom-controls`).hidden = unavailable;
   for (const suffix of ['zoom-in', 'zoom-out', 'fit']) $(`${name}-${suffix}`).disabled = unavailable;
@@ -119,6 +116,14 @@ function renderZoom(name) {
   const bounds = zoomBounds(name), factor = views[name].factor ?? bounds.fit;
   image.style.width = `${Math.max(1, image.naturalWidth * factor)}px`;
   image.style.height = `${Math.max(1, image.naturalHeight * factor)}px`;
+  // Keep a small part visible so a dragged image is always recoverable.
+  for (const [axis, size, viewport] of [['x', image.naturalWidth * factor, stage.clientWidth],
+    ['y', image.naturalHeight * factor, stage.clientHeight]]) {
+    const limit = (viewport + size) / 2 - Math.min(32, size, viewport);
+    view[axis] = Math.max(-limit, Math.min(limit, view[axis]));
+  }
+  image.style.transform = `translate(${(stage.clientWidth - image.naturalWidth * factor) / 2 + view.x}px, ${(stage.clientHeight - image.naturalHeight * factor) / 2 + view.y}px)`;
+  stage.scrollTo(0, 0);
   $(`${name}-zoom-in`).disabled = factor >= bounds.max;
   $(`${name}-zoom-out`).disabled = factor <= bounds.min;
   const text = `${Number((factor * 100).toFixed(1))}%`;
@@ -127,18 +132,49 @@ function renderZoom(name) {
 function setZoom(name, factor, point = null) {
   const image = $(`${name}-image`), stage = $(`${name}-stage`);
   if (image.hidden || !image.naturalWidth) return;
-  const bounds = zoomBounds(name), rect = image.getBoundingClientRect(), viewport = stage.getBoundingClientRect();
+  const bounds = zoomBounds(name), rect = image.getBoundingClientRect(), viewport = stage.getBoundingClientRect(), view = views[name];
   const anchor = point || { x: viewport.left + stage.clientWidth / 2, y: viewport.top + stage.clientHeight / 2 };
   const pixel = { x: (anchor.x - rect.left) / rect.width, y: (anchor.y - rect.top) / rect.height };
-  views[name].factor = factor === null ? null : Math.max(bounds.min, Math.min(bounds.max, factor));
+  view.factor = factor === null ? null : Math.max(bounds.min, Math.min(bounds.max, factor));
+  const nextFactor = view.factor ?? bounds.fit;
+  view.x = factor === null ? 0 : anchor.x - viewport.left - stage.clientWidth / 2 + (0.5 - pixel.x) * image.naturalWidth * nextFactor;
+  view.y = factor === null ? 0 : anchor.y - viewport.top - stage.clientHeight / 2 + (0.5 - pixel.y) * image.naturalHeight * nextFactor;
   renderZoom(name);
-  const next = image.getBoundingClientRect();
-  stage.scrollLeft += next.left + pixel.x * next.width - anchor.x;
-  stage.scrollTop += next.top + pixel.y * next.height - anchor.y;
-  if (factor === null) stage.scrollTo(0, 0);
 }
 function refreshZoom() { for (const name of Object.keys(views)) renderZoom(name); }
 for (const name of Object.keys(views)) {
+  const stage = $(`${name}-stage`), image = $(`${name}-image`);
+  let drag = null, suppressClick = false;
+  stage.addEventListener('pointerdown', event => {
+    if (event.pointerType !== 'mouse' || event.button !== 0 || !event.isPrimary) return;
+    suppressClick = false;
+    if (image.hidden || !image.complete || !image.naturalWidth) return;
+    drag = { id: event.pointerId, startX: event.clientX, startY: event.clientY,
+      x: views[name].x, y: views[name].y, moved: false };
+    stage.setPointerCapture(event.pointerId);
+  });
+  stage.addEventListener('pointermove', event => {
+    if (!drag || event.pointerId !== drag.id) return;
+    const dx = event.clientX - drag.startX, dy = event.clientY - drag.startY;
+    if (!drag.moved && Math.hypot(dx, dy) < 5) return;
+    drag.moved = true;
+    stage.classList.add('panning'); event.preventDefault();
+    views[name].x = drag.x + dx; views[name].y = drag.y + dy;
+    renderZoom(name);
+  });
+  function finishDrag(event) {
+    if (!drag || (event.pointerId !== undefined && event.pointerId !== drag.id)) return;
+    const { id, moved } = drag;
+    drag = null; suppressClick = moved; stage.classList.remove('panning');
+    if (stage.hasPointerCapture(id)) stage.releasePointerCapture(id);
+  }
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) stage.addEventListener(type, finishDrag);
+  window.addEventListener('blur', finishDrag);
+  // A drag still produces a browser click: consume it before the upload handler.
+  stage.addEventListener('click', event => {
+    if (!suppressClick || event.detail === 0) return;
+    suppressClick = false; event.preventDefault(); event.stopImmediatePropagation();
+  }, true);
   for (const [suffix, multiplier] of [['zoom-in', 1.25], ['zoom-out', .8]]) {
     $(`${name}-${suffix}`).onclick = () => setZoom(name, (views[name].factor ?? zoomBounds(name).fit) * multiplier);
   }
@@ -350,7 +386,7 @@ $('clear-file').onclick = () => {
   file = null; generation++; clearResult(); if (originalUrl) URL.revokeObjectURL(originalUrl); originalUrl = null; previewUnavailable = false;
   $('file-input').value = ''; $('clear-file').hidden = true; $('original-image').hidden = true; $('original-image').removeAttribute('src');
   $('original-placeholder').hidden = false; $('original-size').textContent = '—'; setStatus('selectImage');
-  views.original.factor = null; refreshZoom();
+  Object.assign(views.original, { factor: null, x: 0, y: 0 }); refreshZoom();
 };
 for (const name of ['dragenter', 'dragover']) $('original-stage').addEventListener(name, event => {
   event.preventDefault(); if (!busy) { $('original-stage').classList.add('dragover'); event.dataTransfer.dropEffect = 'copy'; }
