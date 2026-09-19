@@ -39,6 +39,7 @@
           </div>
           </div>
           <div class="panel-footer"><span id="original-label">未选择图片</span><div><button id="sample" type="button" class="text-button" data-i18n="sample">示例</button><button id="clear-file" type="button" class="text-button" data-i18n="remove" hidden>移除</button></div></div>
+          <div class="status-strip" role="status" aria-live="polite"><span class="status-icon" id="status-icon" aria-hidden="true">○</span><span id="status">请选择图片。</span></div>
           <div class="panel-actions"><button class="upload-button" id="upload" type="button" data-i18n="upload">上传图片</button><button class="run-button" id="run" type="submit" form="settings" disabled>生成</button><button class="cancel-button" id="cancel" type="button" data-i18n="cancel" hidden>取消</button></div>
         </article>
         <article class="preview-panel result-panel">
@@ -100,7 +101,6 @@
         </fieldset>
       </form>
     </section>
-    <div class="status-strip" role="status" aria-live="polite"><span class="status-icon" id="status-icon">○</span><span id="status">请选择图片。</span></div>
     <div class="warning-box" id="warnings" hidden role="alert"></div>
     <details class="diagnostics" id="diagnostics" hidden><summary data-i18n="diagnostics">处理过程</summary><div id="diagnostic-tabs" class="diagnostic-tabs"></div><div class="diagnostic-preview"><img id="diagnostic-image" alt=""></div></details>
   </main>

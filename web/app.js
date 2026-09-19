@@ -2,6 +2,7 @@ import { t, translate, setLanguage, language, preference } from './i18n.js';
 
 const $ = id => document.getElementById(id);
 let file = null, worker = null, busy = false, operation = '', generation = 0, defaults = null;
+let engine = { state: 'idle', key: 'starting', detail: '' };
 let result = null, stale = false, urls = [], originalUrl = null, downloadUrl = null, previewUnavailable = false;
 let palettes = [], colorTimer = null, colorDirty = false;
 let colorCount = null, colorMaximum = 512, colorRevision = 0, pendingColorRevision = 0;
@@ -26,9 +27,16 @@ function renderState() {
   $('original-placeholder').querySelector('strong').textContent = t(previewUnavailable ? 'previewLater' : 'choose');
   $('scale-value').textContent = `${$('scale').value}×`;
   renderColorLimit();
-  $('status').textContent = t(status.key, status.values);
-  if (result?.meta.grid.native_preserved && status.key === 'done') $('status').textContent = t('nativePreserved');
-  if (result?.meta.grid.stylized && status.key === 'done') $('status').textContent = t('stylized');
+  let visibleStatus = status;
+  if (engine.state === 'loading' && status.kind !== 'error') visibleStatus = { key: engine.key, kind: 'busy' };
+  else if (engine.state === 'error' && !busy && status.kind !== 'error') visibleStatus = { key: 'engineFailed', kind: 'error', values: { detail: engine.detail } };
+  else if (engine.state === 'ready' && ['selectImage', 'ready'].includes(status.key)) visibleStatus = { key: 'engineReady', kind: '' };
+  $('status').textContent = t(visibleStatus.key, visibleStatus.values);
+  $('status').dataset.engineState = engine.state;
+  $('status').parentElement.className = `status-strip ${visibleStatus.kind}`;
+  $('status-icon').textContent = visibleStatus.kind === 'busy' ? '◌' : visibleStatus.kind === 'error' ? '!' : '○';
+  if (result?.meta.grid.native_preserved && visibleStatus.key === 'done') $('status').textContent = t('nativePreserved');
+  if (result?.meta.grid.stylized && visibleStatus.key === 'done') $('status').textContent = t('stylized');
   if (result) $('warnings').textContent = t(result.meta.grid.stylized ? 'stylizedHelp' : result.meta.grid.fallback ? 'fallback' : 'lowConfidence');
   const active = $('diagnostic-tabs').querySelector('.active');
   if (active) $('diagnostic-image').alt = t(active.dataset.i18n);
@@ -46,8 +54,6 @@ function renderState() {
 }
 function setStatus(key, kind = '', values = {}) {
   status = { key, kind, values };
-  $('status').parentElement.className = `status-strip ${kind}`;
-  $('status-icon').textContent = kind === 'busy' ? '◌' : kind === 'error' ? '!' : '○';
   renderState();
 }
 function setBusy(value, kind = '') {
@@ -330,10 +336,22 @@ function showResult(data) {
 }
 function getWorker() {
   if (!worker) {
-    worker = new Worker(new URL('./worker.js', import.meta.url));
+    const activeWorker = new Worker(new URL('./worker.js', import.meta.url));
+    worker = activeWorker;
     worker.onmessage = ({ data }) => {
-      if (data.type === 'progress') { if (busy) setStatus(data.key, 'busy'); return; }
+      if (worker !== activeWorker) return;
+      if (data.type === 'progress' && ['starting', 'loading'].includes(data.key)) {
+        engine = { state: 'loading', key: data.key, detail: '' }; renderState(); return;
+      }
+      // Engine replies are independent of file changes and job generation IDs.
+      // In particular, a ready reply must not unlock an already queued job.
+      if (data.id === 'engine-init') {
+        if (data.type === 'ready') engine = { state: 'ready', key: 'engineReady', detail: '' };
+        else if (data.type === 'error') engine = { state: 'error', key: 'engineFailed', detail: data.message };
+        renderState(); return;
+      }
       if (data.id !== generation) return;
+      if (data.type === 'progress') { if (busy) setStatus(data.key, 'busy'); return; }
       setBusy(false);
       if (data.type === 'result') showResult(data);
       if (data.type === 'recolor') {
@@ -356,7 +374,18 @@ function getWorker() {
       }
       if (data.type === 'error') setStatus('failed', 'error', { detail: data.message.trim().split('\n').at(-1) });
     };
-    worker.onerror = event => { worker.terminate(); worker = null; setBusy(false); setStatus('failed', 'error', { detail: event.message }); };
+    worker.onerror = event => {
+      if (worker !== activeWorker) return;
+      const initializing = engine.state === 'loading';
+      worker.terminate(); worker = null;
+      engine = { state: 'error', key: 'engineFailed', detail: event.message };
+      setBusy(false); setStatus(initializing ? 'engineFailed' : 'failed', 'error', { detail: event.message });
+    };
+  }
+  if (engine.state === 'idle' || engine.state === 'error') {
+    engine = { state: 'loading', key: 'starting', detail: '' };
+    worker.postMessage({ type: 'init', id: 'engine-init' });
+    renderState();
   }
   return worker;
 }
@@ -376,7 +405,11 @@ $('download').onclick = () => {
   setBusy(true, 'export'); setStatus('exporting', 'busy');
   getWorker().postMessage({ type: 'export', id, bytes, scale: Number($('scale').value) }, [bytes]);
 };
-$('cancel').onclick = () => { generation++; worker?.terminate(); worker = null; setBusy(false); setStatus('cancelled'); };
+$('cancel').onclick = () => {
+  generation++; worker?.terminate(); worker = null;
+  engine = { state: 'idle', key: 'starting', detail: '' };
+  setBusy(false); setStatus('cancelled');
+};
 $('original-stage').onclick = () => { if (!busy) $('file-input').click(); };
 $('upload').onclick = () => { if (!busy) $('file-input').click(); };
 $('original-stage').onkeydown = event => {
@@ -405,6 +438,7 @@ translate(); renderState(); setBusy(false);
 if (location.protocol === 'file:') setStatus('httpRequired', 'error');
 else {
   try {
+    getWorker(); // Start in the background while settings load and the user chooses an image.
     const response = await fetch('./core-manifest.json', { cache: 'no-cache' });
     if (!response.ok) throw new Error(t('syncRequired'));
     const manifest = await response.json(); defaults = manifest.defaults; palettes = manifest.palettes;

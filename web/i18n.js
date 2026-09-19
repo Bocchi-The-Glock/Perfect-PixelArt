@@ -40,6 +40,8 @@ const messages = {
   exportSize: ['导出 {size}', 'Export {size}'], exporting: ['正在导出 PNG…', 'Exporting PNG…'], exported: ['PNG 已导出。', 'PNG exported.'],
   reading: ['正在读取图片…', 'Reading image…'], starting: ['正在启动处理引擎…', 'Starting processing engine…'],
   loading: ['正在载入图像处理组件…', 'Loading image processing components…'], processing: ['正在识别网格、恢复颜色…', 'Detecting grid and recovering colors…'],
+  engineReady: ['处理引擎已就绪。', 'Processing engine ready.'],
+  engineFailed: ['引擎准备失败，点击生成可重试：{detail}', 'Engine setup failed. Generate to retry: {detail}'],
   largeFile: ['文件超过 64 MB，请选择较小的静态图片。', 'File exceeds 64 MB. Choose a smaller static image.'],
   previewLater: ['图片将在处理后显示', 'Preview available after processing'], sampleError: ['无法载入示例。', 'Could not load sample.'],
   failed: ['处理失败：{detail}', 'Processing failed: {detail}'],

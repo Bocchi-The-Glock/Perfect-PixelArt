@@ -1,7 +1,7 @@
 /* Image processing runs only in this browser worker. No requests contain images. */
 let bootPromise;
 let busy = false;
-const progress = (key) => self.postMessage({ type: 'progress', key });
+const progress = (key, id) => self.postMessage({ type: 'progress', key, id });
 
 async function checkedFetch(url) {
   const response = await fetch(url, { cache: 'no-cache' });
@@ -26,18 +26,31 @@ async function initialize() {
   return { py, manifest };
 }
 
+function getEngine() {
+  // Prewarming and an early Generate request share the same initialization.
+  // Reset on failure so the next explicit request can retry.
+  return bootPromise ||= initialize().catch(error => {
+    bootPromise = undefined;
+    throw error;
+  });
+}
+
 self.onmessage = async ({ data }) => {
+  if (data.type === 'init') {
+    try {
+      const engine = await getEngine();
+      self.postMessage({ type: 'ready', id: data.id, manifest: engine.manifest });
+    } catch (error) {
+      self.postMessage({ type: 'error', id: data.id, message: String(error.message || error) });
+    }
+    return;
+  }
   if (busy) { self.postMessage({ type: 'error', id: data.id, message: 'An operation is already running.' }); return; }
   busy = true;
   let py;
   try {
-    bootPromise ||= initialize();
-    const engine = await bootPromise;
+    const engine = await getEngine();
     py = engine.py;
-    if (data.type === 'init') {
-      self.postMessage({ type: 'ready', id: data.id, manifest: engine.manifest });
-      return;
-    }
     if (data.type === 'export') {
       py.FS.mkdirTree('/job');
       py.FS.writeFile('/job/native.png', new Uint8Array(data.bytes));
@@ -48,7 +61,7 @@ self.onmessage = async ({ data }) => {
       return;
     }
     if (data.type === 'recolor') {
-      progress('coloring');
+      progress('coloring', data.id);
       py.FS.mkdirTree('/job');
       py.FS.writeFile('/job/base.png', new Uint8Array(data.bytes));
       py.globals.set('_request', JSON.stringify(data.settings));
@@ -61,7 +74,7 @@ self.onmessage = async ({ data }) => {
       return;
     }
     if (data.type !== 'process') throw new Error('Unknown operation');
-    progress('processing');
+    progress('processing', data.id);
     py.FS.mkdirTree('/job');
     py.FS.writeFile('/job/input', new Uint8Array(data.bytes));
     py.globals.set('_request', JSON.stringify(data.request));
@@ -79,8 +92,6 @@ self.onmessage = async ({ data }) => {
     self.postMessage(result, transfers);
   } catch (error) {
     self.postMessage({ type: 'error', id: data.id, message: String(error.message || error) });
-    // Initialization may be retried after transient static-resource failures.
-    if (!py) bootPromise = undefined;
   } finally {
     if (py) {
       py.runPython("shutil.rmtree('/job', ignore_errors=True)\nglobals().pop('_request', None)\nglobals().pop('_scale', None)");
