@@ -12,7 +12,7 @@ import pytest
 from PIL import Image, ImageFilter
 
 from pixelperfect import Config, pixelize, save_result, export_png
-from pixelperfect.features import extract_features
+from pixelperfect.features import extract_features, axis_segment_evidence
 from pixelperfect.grid import detect_grid, make_lines
 from pixelperfect.image_io import load_image, to_pil
 from pixelperfect.palette import quantize_cells
@@ -530,6 +530,167 @@ def test_irregular_anime_grid_is_recovered_before_photo_fallback(variant):
         repeated = pixelize(source, Config(photo_mode='off'))
         assert result.grid == repeated.grid
         np.testing.assert_array_equal(result.image, repeated.image)
+
+
+def test_axis_segments_distinguish_pixel_steps_from_diagonal_lines():
+    from PIL import ImageDraw
+
+    def diamond(size):
+        image = Image.new('RGBA', (size, size), 'white')
+        draw = ImageDraw.Draw(image)
+        draw.polygon([(size//2, size//8), (7*size//8, size//2),
+                      (size//2, 7*size//8), (size//8, size//2)], fill='#185b99')
+        return image
+
+    stepped = diamond(48).resize((384, 384), Image.Resampling.NEAREST)
+    diagonal = diamond(1536).resize((384, 384), Image.Resampling.LANCZOS)
+    pixel = axis_segment_evidence(load_image(stepped).rgba, (8, 8))
+    curve = axis_segment_evidence(load_image(diagonal).rgba, (8, 8))
+    assert min(pixel['active_patches'], curve['active_patches']) >= 4
+    assert pixel['axis_fraction'] > .80 and pixel['segment_fraction'] > .45
+    assert curve['axis_fraction'] < .20 and curve['segment_fraction'] < .10
+
+
+def test_axis_segments_ignore_hidden_rgb_and_see_alpha_contours():
+    from PIL import ImageDraw
+    image = Image.new('RGBA', (390, 390))
+    draw = ImageDraw.Draw(image)
+    for y in range(18, 390, 32):
+        for x in range(18, 390, 32):
+            draw.rectangle((x, y, x+17, y+17), fill=(0, 0, 0, 255))
+    rgba = load_image(image).rgba
+    before = rgba.copy()
+    expected = axis_segment_evidence(rgba, (18, 18))
+    changed = rgba.copy()
+    changed[changed[..., 3] == 0, :3] = np.random.default_rng(84).random(
+        (np.count_nonzero(changed[..., 3] == 0), 3))
+    assert axis_segment_evidence(changed, (18, 18)) == expected
+    np.testing.assert_array_equal(rgba, before)
+    assert expected['segment_fraction'] > .5 and expected['active_patches'] == 9
+
+
+def test_axis_segment_memory_and_sample_budget_are_independent_of_image_size():
+    # An enormous logical canvas without allocating it: the implementation must
+    # read only the bounded patches, not form whole-image gradient temporaries.
+    rgba = np.broadcast_to(np.array([.3, .5, .8, 1.], np.float32), (100000, 100000, 4))
+    evidence = axis_segment_evidence(rgba, (64, 64))
+    assert evidence['sampled_pixels'] <= 9*130*130
+    assert len(evidence['patches']) == 9 and evidence['active_patches'] == 0
+
+
+def test_native_and_strong_grids_skip_segment_scan(monkeypatch):
+    import pixelperfect.grid as grid
+
+    def unexpected(*args):
+        raise AssertionError('Native/strong grid should not pay for the auxiliary scan')
+
+    monkeypatch.setattr(grid, 'axis_segment_evidence', unexpected)
+    truth = native_scene(18)
+    for image in (truth, enlarged(truth, 12)):
+        result = pixelize(image)
+        assert not result.diagnostics['grid_search']['axis_segments']['checked']
+        np.testing.assert_array_equal(result.image.convert('RGBA'), truth.convert('RGBA'))
+
+
+def test_sparse_axis_segment_evidence_abstains():
+    from types import SimpleNamespace
+    from pixelperfect.grid import GridCandidate, validate_grid_segments
+    image = np.ones((390, 390, 4), np.float32)
+    image[180:210, 195:, :3] = 0
+    cuts = np.arange(0., 391, 30)
+    candidate = GridCandidate(30., 30., 0., 0., cuts, cuts, .32,
+                              metadata={'source': 'weak test candidate'})
+    report = {}
+    chosen = validate_grid_segments(image, SimpleNamespace(ramp_ratio=(1.4, 1.4)), candidate, report)
+    assert chosen is candidate
+    assert report['axis_segments']['active_patches'] < 4
+    assert report['axis_segments']['decision'] == 'inconclusive'
+
+
+@pytest.mark.parametrize('variant', ['original', 'flip', 'slight_blur', 'crop'])
+def test_illustration_does_not_keep_spurious_coarse_grid(variant):
+    source = Path(__file__).resolve().parents[2] / 'input/ritsu_2.jpg'
+    with Image.open(source) as opened:
+        image = opened.copy()
+    if variant == 'flip':
+        image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+    elif variant == 'slight_blur':
+        image = image.filter(ImageFilter.GaussianBlur(.6))
+    elif variant == 'crop':
+        image = image.crop((3, 5, image.width-7, image.height-9))
+    result = pixelize(image)
+    assert result.grid['stylized'] and not result.grid['fallback']
+    assert result.image.width >= 180 and result.image.height >= 190
+    if variant in ('original', 'flip'):
+        assert result.image.size == (190, 200)
+        search = result.diagnostics['grid_search']
+        assert search['axis_segments']['decision'] == 'rejected'
+        assert search['segment_rejected_grid']['size'] == [28, 28]
+        assert search['axis_segments']['sampled_pixels'] <= 9*130*130
+    if variant == 'original':
+        disabled = pixelize(image, Config(photo_mode='off'))
+        assert disabled.grid['fallback'] and disabled.image.size == image.size
+        np.testing.assert_array_equal(disabled.image, image)
+
+
+@pytest.mark.parametrize('name,spacing', [
+    ('exec-c6a62802-b08a-44b3-b383-0c3ecfaa2c3a.png', 6.),
+    ('exec-7ad1ad37-02cd-418a-98c5-ca860384c43a.png', 7.),
+])
+def test_weak_grid_rectilinear_art_uses_explicit_edge_estimate(name, spacing, tmp_path):
+    import json
+    source = Path(__file__).resolve().parents[2] / 'input' / name
+    result = pixelize(source)
+    search = result.diagnostics['grid_search']
+    estimate = search['image_routing']['edge_estimate']
+    assert result.grid['estimated'] and not result.grid['stylized']
+    assert result.grid['sx'] == result.grid['sy'] == spacing
+    assert 128 <= max(result.image.size) < 256
+    assert search['selected_score'] < .30  # Do not pretend the original lattice passed.
+    assert result.confidence == result.diagnostics['selected_score'] == 0
+    assert 'original lattice unconfirmed' in result.diagnostics['warnings'][0]
+    assert estimate['applied'] and estimate['segments']['active_patches'] >= 4
+    assert estimate['segments']['sampled_pixels'] <= 9*130*130
+    for axis, size in zip(('x', 'y'), result.grid['input_size']):
+        cuts = result.grid[axis + '_lines']
+        assert cuts[0] == 0 and cuts[-1] == size and min(np.diff(cuts)) >= 1
+    np.testing.assert_array_equal(result.image, pixelize(source).image)
+    save_result(result, tmp_path/'result.png', debug=True)
+    info = json.loads((tmp_path/'debug/result/info.json').read_text())
+    assert info['grid']['estimated'] and info['heuristic_confidence'] == 0
+
+
+@pytest.mark.parametrize('sampling', ['center', 'median', 'robust'])
+def test_edge_estimate_uses_original_sampler_and_independent_palette(sampling):
+    source = Path(__file__).resolve().parents[2] / 'input/exec-c6a62802-b08a-44b3-b383-0c3ecfaa2c3a.png'
+    result = pixelize(source, Config(sampling=sampling, local_warp='off'))
+    assert result.grid['estimated'] and not result.grid['warped']
+    rgba = load_image(source).rgba
+    cells = recover_cells(rgba, result.grid['x_lines'], result.grid['y_lines'], sampling)
+    np.testing.assert_array_equal(result.image, to_pil(cells.rgba, False))
+    colored = pixelize(source, Config(sampling=sampling, local_warp='off', colors=8))
+    assert colored.grid == result.grid
+    np.testing.assert_array_equal(colored.native_image, result.image)
+
+
+@pytest.mark.parametrize('config', [Config(photo_mode='off'), Config(min_pixel_size=10), Config(max_pixel_size=4)])
+def test_edge_estimate_respects_disabled_mode_and_spacing_range(config):
+    source = Path(__file__).resolve().parents[2] / 'input/exec-c6a62802-b08a-44b3-b383-0c3ecfaa2c3a.png'
+    result = pixelize(source, config)
+    assert not result.grid['estimated']
+    if config.photo_mode == 'off':
+        assert result.grid['fallback'] and result.image.size == (1254, 1254)
+
+
+def test_rejected_curves_do_not_run_a_second_segment_scan(monkeypatch):
+    from pixelperfect import natural
+    def unexpected(*args, **kwargs):
+        raise AssertionError('curved contours must not be rescued at another scale')
+    monkeypatch.setattr(natural, 'axis_segment_evidence', unexpected)
+    source = Path(__file__).resolve().parents[2] / 'input/ritsu_2.jpg'
+    result = pixelize(source)
+    assert result.grid['stylized'] and not result.grid['estimated']
+    assert result.image.size == (190, 200)
 
 
 # SAMPLING

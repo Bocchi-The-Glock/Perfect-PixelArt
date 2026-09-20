@@ -23,6 +23,65 @@ def peaks(values, threshold=0.):
     return ((starts[valid] + ends[valid] - 1) // 2).astype(int)
 
 
+def axis_segment_evidence(rgba, spacing):
+    """Measure straight, axis-aligned edge runs on at most nine source patches.
+
+    Original pixels are never resized. Centred, tangentially smoothed derivatives
+    distinguish a diagonal staircase from an actual horizontal/vertical segment.
+    This is supporting evidence, not a pixel-art classifier.
+    """
+    h, w = rgba.shape[:2]
+    ph, pw = min(h, 130), min(w, 130)
+    if min(ph, pw) < 5:
+        return dict(active_patches=0, sampled_pixels=0, patches=[])
+    yy = np.unique(np.linspace(0, h - ph, min(3, max(1, h // ph))).astype(int))
+    xx = np.unique(np.linspace(0, w - pw, min(3, max(1, w // pw))).astype(int))
+    origins = [(int(x), int(y)) for y in yy for x in xx]
+    values = np.stack([rgba[y:y+ph, x:x+pw] for x, y in origins])
+    values[..., :3] *= values[..., 3:]
+    gx = np.zeros((len(origins), ph-2, pw-2), np.float32)
+    gy = np.zeros_like(gx)
+    for channel in range(4):
+        v = values[..., channel]
+        dx = (v[:, :, 2:] - v[:, :, :-2]) * .5
+        dy = (v[:, 2:, :] - v[:, :-2, :]) * .5
+        np.maximum(gx, abs((dx[:, :-2] + 2*dx[:, 1:-1] + dx[:, 2:]) * .25), out=gx)
+        np.maximum(gy, abs((dy[:, :, :-2] + 2*dy[:, :, 1:-1] + dy[:, :, 2:]) * .25), out=gy)
+    strength = np.maximum(gx, gy)
+    threshold = np.maximum(.012, np.minimum(.04, .15*strength.max(axis=(1, 2))))[:, None, None]
+    strong = strength >= threshold
+    vertical = strong & (gx >= 3*gy)
+    horizontal = strong & (gy >= 3*gx)
+
+    def sustained(mask, length, axis):
+        padding = [(0, 0)] * 3
+        padding[axis] = (length // 2 + 1, (length - 1) // 2)
+        total = np.cumsum(np.pad(mask, padding), axis=axis, dtype=np.int32)
+        first, last = [slice(None)]*3, [slice(None)]*3
+        first[axis], last[axis] = slice(None, -length), slice(length, None)
+        count = total[tuple(last)] - total[tuple(first)]
+        return mask & (count >= length - (1 if length >= 6 else 0))
+
+    lengths = [max(3, min(16, round(.5*s))) for s in spacing]
+    vr = sustained(vertical, lengths[1], 1)
+    hr = sustained(horizontal, lengths[0], 2)
+    mass = np.minimum(strength, .2) * strong
+    patches = []
+    for index, origin in enumerate(origins):
+        count = int(strong[index].sum())
+        weight = float(mass[index].sum())
+        denom = max(weight, 1e-9)
+        patches.append(dict(origin=list(origin), edges=count, mass=weight,
+                            vertical=float(mass[index][vr[index]].sum() / denom),
+                            horizontal=float(mass[index][hr[index]].sum() / denom),
+                            axis_aligned=float(mass[index][vertical[index] | horizontal[index]].sum() / denom)))
+    active = [p for p in patches if p['edges'] >= 32 and p['mass'] >= 1.]
+    return dict(sampled_pixels=int(values.shape[0]*ph*pw), patch_size=[pw, ph],
+                run_length=lengths, active_patches=len(active), patches=patches,
+                segment_fraction=float(np.mean([p['vertical']+p['horizontal'] for p in active])) if active else 0.,
+                axis_fraction=float(np.mean([p['axis_aligned'] for p in active])) if active else 0.)
+
+
 @dataclass
 class FeatureData:
     gradient_x: np.ndarray

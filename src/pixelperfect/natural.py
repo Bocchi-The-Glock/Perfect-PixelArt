@@ -1,11 +1,62 @@
 """Conservative continuous-image rendering, separate from pixel-grid recovery."""
 import numpy as np
-from .grid import GridCandidate
+from .grid import GridCandidate, make_lines, _phase, _walk
 from .sampling import recover_cells
-from .features import DENSE_PIXEL_LIMIT
+from .features import DENSE_PIXEL_LIMIT, peaks, axis_segment_evidence
 
 
-def route_image(rgba, features, chosen, config):
+def _estimate_edge_grid(rgba, features, config, report):
+    """One inexpensive scale estimate for sharp, rectilinear art without a lattice.
+
+    Reuse source projections and the bounded segment scan. No extra FFT/search,
+    and no claim that a median edge interval recovers the original pixel grid.
+    """
+    detail = report['edge_estimate'] = dict(applied=False)
+    if min(features.ramp_ratio) < 1.:
+        detail['reason'] = 'soft boundaries; retain ordinary rendering'
+        return None
+    axes, sizes = [], []
+    for profile in (features.profile_x, features.profile_y):
+        positions = peaks(profile, max(.0008, .2 * float(profile.max())))
+        separated = []
+        for p in positions:
+            if not separated or p - separated[-1] >= 4:
+                separated.append(p)
+        if len(separated) < 8:
+            detail['reason'] = 'too few distributed edge peaks'
+            return None
+        pos = np.asarray(separated)
+        axes.append(dict(profile=profile, pos=pos, weights=profile[pos]))
+        sizes.append(float(np.median(np.diff(pos))))
+    # The finer direction is conservative when backgrounds hide many boundaries.
+    # Reject coarse estimates instead of imposing an arbitrary huge pixel block.
+    spacing = min(sizes)
+    detail.update(axis_median_gaps=sizes, spacing=spacing)
+    if not config.min_pixel_size <= spacing <= min(config.max_pixel_size, max(rgba.shape[:2]) / 128):
+        detail['reason'] = 'estimated spacing outside range or too coarse'
+        return None
+    evidence = axis_segment_evidence(rgba, (spacing, spacing))
+    detail['segments'] = evidence
+    active = [p for p in evidence['patches'] if p['edges'] >= 32 and p['mass'] >= 1.]
+    supporters = sum(p['axis_aligned'] >= .70 and p['vertical'] + p['horizontal'] >= .35 for p in active)
+    if (len(active) < 4 or supporters < 2 * len(active) / 3
+            or evidence['axis_fraction'] < .75 or evidence['segment_fraction'] < .45):
+        detail['reason'] = 'insufficient distributed straight-edge support'
+        return None
+    phases = [_phase(a, spacing) for a in axes]
+    cuts = [_walk(a, spacing, p, config.local_warp == 'auto') for a, p in zip(axes, phases)]
+    if max(len(c) - 1 for c in cuts) < 128:
+        detail['reason'] = 'adjusted grid would be too coarse'
+        return None
+    regular = [make_lines(len(a['profile']), spacing, p) for a, p in zip(axes, phases)]
+    warped = any(len(c) != len(r) or not np.allclose(c, r) for c, r in zip(cuts, regular))
+    detail.update(applied=True, reason='distributed straight edges; median interval estimate',
+                  generated_size=[len(c) - 1 for c in cuts])
+    return GridCandidate(spacing, spacing, *phases, *cuts, 0., warped,
+                         {'source': 'axis-aligned edge estimate', 'estimated': True})
+
+
+def route_image(rgba, features, chosen, config, segment_evidence=None):
     """Prefer recovered/native grids; render a bounded fallback without a lattice.
 
     This is an abstaining heuristic, not a calibrated pixel-art/photo classifier.
@@ -39,6 +90,14 @@ def route_image(rgba, features, chosen, config):
                 return keep('repeated cell intervals or aligned grid in both axes')
     if chosen is not None and min(features.ramp_ratio) >= 1.25:
         return keep('sharp pixel-like transitions; abstain from ordinary-image rendering')
+
+    # Accepted grids keep their existing behavior. A rejected curved outline must
+    # not re-enter through a finer scale; reuse the validation result without a scan.
+    if chosen is None and (segment_evidence or {}).get('decision') != 'rejected':
+        estimated = _estimate_edge_grid(rgba, features, config, report)
+        if estimated is not None:
+            report['reason'] = 'edge-guided estimate; original lattice unconfirmed'
+            return estimated, report
 
     # About 4 source pixels per rendered pixel, bounded to 96..256 on the long side.
     # Sparse transparent subjects receive a finer budget to avoid losing their detail.

@@ -91,6 +91,8 @@ def write_debug(result, original=None, directory=None, export_path=None, export_
                      [fh // 2 + offset * fh / result.grid["sy"] for offset in (-1, 1)])
     fft_title = ("Image FFT: generated rendering grid; no detected reciprocal spacing" if result.grid.get('stylized', False)
                  else "Image FFT: log(1+|F|); red = selected reciprocal spacing")
+    if result.grid.get('estimated', False):
+        fft_title = "Image FFT: red = edge-estimated spacing, NOT a confirmed FFT period"
     if (fw, fh) != (w, h):
         fft_title = f"FFT: {fw}x{fh} source patch (display); detector uses full-length scanlines"
     _display(fft, fft_title, lines=fft_lines, source_size=(fw, fh)).save(directory / "fft.png")
@@ -163,4 +165,15 @@ def write_debug(result, original=None, directory=None, export_path=None, export_
         "FFT/edge preview contrast is normalized on display samples, not the full image.",
         *result.diagnostics["warnings"],
     ]
+    segments = result.diagnostics['grid_search'].get('axis_segments', {})
+    if segments:
+        summary.append(f"Axis-segment validation: {segments.get('decision')}; {segments.get('reason')}")
+        if segments.get('checked'):
+            summary.append(f"Straight-run edge-weight fraction: {segments['segment_fraction']:.3f}; "
+                           f"active patches: {segments['active_patches']}; sampled pixels: {segments['sampled_pixels']}")
+    estimate = result.diagnostics['grid_search'].get('image_routing', {}).get('edge_estimate')
+    if estimate:
+        summary.append(f"Edge-guided estimate: {estimate['applied']}; {estimate['reason']}")
+        summary.append(f"Axis median edge gaps: {estimate.get('axis_median_gaps')}; "
+                       f"estimated spacing: {estimate.get('spacing')}")
     (directory / "info.txt").write_text("\n".join(summary) + "\n", encoding="utf-8")

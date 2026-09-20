@@ -33,6 +33,8 @@ const messages = {
   noFile: ['未选择图片', 'No image selected'], selectImage: ['请选择图片。', 'Select an image.'],
   ready: ['图片已就绪。', 'Image ready.'], done: ['处理完成。', 'Done.'], cancelled: ['已取消。', 'Cancelled.'],
   nativePreserved: ['检测到一像素细节，已保留原始尺寸；颜色设置可继续调整。', 'One-pixel details detected; original dimensions preserved. Color settings remain available.'],
+  estimatedGrid: ['已按方正边缘估算网格并生成像素画。', 'Pixel image generated using an edge-guided grid estimate.'],
+  estimatedGridHelp: ['未确认统一的原始网格，已按多处水平／垂直边段估算间距。网格置信分数为 0，请检查细节。', 'The original lattice is unconfirmed. Spacing was estimated from horizontal/vertical edge segments in multiple regions. Grid confidence is 0; check the details.'],
   photoMode: ['未识别网格时自动像素化', 'Pixelize when no reliable grid is found'],
   stylized: ['已自动转换为像素画。', 'Image pixelized automatically.'],
   stylizedHelp: ['未确认可靠的原始网格，已按保守尺寸生成像素画。网格分数为 0，表示这是自动像素化结果。', 'No reliable original grid was confirmed. A conservative pixel image was generated. Grid confidence is 0 for this rendering result.'],

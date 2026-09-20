@@ -37,13 +37,14 @@ function renderState() {
   $('status-icon').textContent = visibleStatus.kind === 'busy' ? '◌' : visibleStatus.kind === 'error' ? '!' : '○';
   if (result?.meta.grid.native_preserved && visibleStatus.key === 'done') $('status').textContent = t('nativePreserved');
   if (result?.meta.grid.stylized && visibleStatus.key === 'done') $('status').textContent = t('stylized');
+  if (result?.meta.grid.estimated && visibleStatus.key === 'done') $('status').textContent = t('estimatedGrid');
   if (result) {
     const notes = [];
     if (result.meta.input?.frames > 1) notes.push(t('primaryPhoto', {
       frame: result.meta.input.selected_frame + 1, count: result.meta.input.frames,
     }));
     if (result.meta.warnings.some(note => !note.startsWith('MPO photo:'))) {
-      notes.push(t(result.meta.grid.stylized ? 'stylizedHelp' : result.meta.grid.fallback ? 'fallback' : 'lowConfidence'));
+      notes.push(t(result.meta.grid.estimated ? 'estimatedGridHelp' : result.meta.grid.stylized ? 'stylizedHelp' : result.meta.grid.fallback ? 'fallback' : 'lowConfidence'));
     }
     $('warnings').textContent = notes.join(' ');
   }

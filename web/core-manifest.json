@@ -89,19 +89,19 @@
       "unique_colors": 275
     }
   ],
-  "bundle_sha256": "07dfbea73b1e69ec87a4c5d93f61380e28f2c257c37afcc9d803af8ea366411c",
+  "bundle_sha256": "e37c6fca529d3eff8c9d08f8ca00a99ebcbcf249a6712a503f27b0c1834e1bfb",
   "files": {
     "pixelperfect/__init__.py": "de190a42208ff8d9e06558be0baea9fda3f2891b0427c509d1cb27f114a5f2c5",
     "pixelperfect/__main__.py": "54297f47e0972c3a51a0d2da96da41bf38d4df4e77977cd75e6c4e6f1c341a46",
     "pixelperfect/color_math.py": "ab735d2728ff0db7623d69f8d75dbcc407f04c903f946ed9bd029d64a45b883c",
     "pixelperfect/config.py": "87800d8a920b02699658adaa7e80ade364923d7ef3b8b73f0df39de2868da285",
-    "pixelperfect/diagnostics.py": "3aaad16bacdf615b17a8ad21b74b6f820685551b51fe49dda612d1c7c8f0adf8",
-    "pixelperfect/features.py": "c2265de18e523aaed4c89c67f479b50b65aa9358fdfb2b36ef65857e508909dc",
-    "pixelperfect/grid.py": "d6ec37328d46cdfc373d7a712cf7b7184bfe196367d4233e95805bf8ccfe7f88",
+    "pixelperfect/diagnostics.py": "5f797af02c698cb898450dab7ddf4273db9cdc5b5e73c887416c215ef6cf8d9c",
+    "pixelperfect/features.py": "009e33929c52e29235f37a82dbdb154ee2e60eb119229be59e84b455348ff3fc",
+    "pixelperfect/grid.py": "a015b73bd770e6ff61e562559e2cde151176867a135eb4223d57c1677ff2d45b",
     "pixelperfect/image_io.py": "b787dddfd661a77428bce2d5254ff162cdd226a0a1bd96fda798d1470056034e",
-    "pixelperfect/natural.py": "fa4b38d1d28e588eb9b0b319911c54ff472e1ca65caa1dda08835cda7bb062be",
+    "pixelperfect/natural.py": "c6ec6b9fc9574c9927e2de663a4fe7b902c94849f2fa70ecdcf8d7e49499f46e",
     "pixelperfect/palette.py": "bca4613883f76c83a8a4fb4610f332511b416f9eaf6bd0e350069bc1e3937cd7",
-    "pixelperfect/pipeline.py": "c19007765f2de74a5283feb7aeeec5b0c724f0c925f3a6a1b7e17fa5562a65c5",
+    "pixelperfect/pipeline.py": "26a5b723b0a9dbc8c6a93558fc3256fa1fd07d6526603e7d8553891da0dffa0c",
     "pixelperfect/sampling.py": "b3e416d851a48027485f044674af99851e31b66ab7d1d16a060ea9aca85f5b65",
     "pixelperfect/palettes.json": "d44788e6515ca7daffb7cdfb396dbd32b53a0c7f2247dbfecf9c5188667ddd89",
     "web_bridge.py": "47b8be9da740a280bf1b31f4e78c6ca7ea0b38cf22fd3f52b9d8950be731dc3e"

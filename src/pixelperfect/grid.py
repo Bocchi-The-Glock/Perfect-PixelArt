@@ -1,7 +1,7 @@
 """Small Fourier/gap proposal set, cheap edge validation, then one lattice."""
 from dataclasses import dataclass, field, replace
 import numpy as np
-from .features import peaks, smooth
+from .features import peaks, smooth, axis_segment_evidence
 
 _MIN_GRID_SCORE = .30
 
@@ -386,3 +386,53 @@ def detect_grid(features, shape, config):
                                                 evidence_scope=features.mode)
             report['selected_score'] = integer.support
     return _native_resolution(features, shape, chosen, report)
+
+
+def validate_grid_segments(rgba, features, chosen, report):
+    """Let distributed non-axis-aligned contours veto an already weak lattice.
+
+    Strong grids and native/resampling evidence take precedence. Too few edges
+    abstain; a positive segment result never creates a grid or inflates its score.
+    """
+    evidence = dict(checked=False, decision='unchanged')
+    report['axis_segments'] = evidence
+    if chosen is None:
+        evidence['reason'] = 'no candidate grid to validate'
+        return chosen
+    if (chosen.metadata.get('native_preserved') or chosen.metadata['source'] in (
+            'validated interpolation knots', 'exact two-pixel repetition', 'validated integer repetition')
+            or min(chosen.sx, chosen.sy) < 3):
+        evidence['reason'] = 'native pixels or validated resampling grid take precedence'
+        return chosen
+    metrics = chosen.metadata.get('axis_metrics', [])
+    repeated = len(metrics) == 2 and min(m['unit_gaps'] for m in metrics) > .45
+    aligned = (len(metrics) == 2 and min(m['edge_fit'] for m in metrics) > .65
+               and min(m['unit_gaps'] for m in metrics) > .30)
+    if chosen.support >= .45 or repeated or aligned:
+        evidence['reason'] = 'strong existing grid evidence takes precedence'
+        return chosen
+    if min(features.ramp_ratio) < 1.25:
+        evidence['reason'] = 'soft boundaries; missing straight runs are inconclusive'
+        return chosen
+    evidence.update(axis_segment_evidence(rgba, (chosen.sx, chosen.sy)), checked=True)
+    active = [p for p in evidence['patches'] if p['edges'] >= 32 and p['mass'] >= 1.]
+    weak = [p for p in active if p['vertical'] + p['horizontal'] < .25]
+    evidence['contradicting_patches'] = len(weak)
+    # Requiring both orientation and sustained runs avoids treating short blurred
+    # pixel steps as curves. Uniform patch votes keep one long outline from voting
+    # for an entire image; blank/transparent patches never count against a grid.
+    contradiction = (len(active) >= 4 and len(weak) / len(active) >= .75
+                     and evidence['segment_fraction'] < .25 and evidence['axis_fraction'] < .75)
+    if not contradiction:
+        supported = (len(active) >= 3 and evidence['segment_fraction'] >= .35
+                     and evidence['axis_fraction'] >= .75)
+        evidence.update(decision='supported' if supported else 'inconclusive',
+                        reason='axis-aligned runs support the candidate' if supported else
+                               'insufficient contradictory evidence; preserve candidate')
+        return chosen
+    evidence.update(decision='rejected', reason='weak grid contradicted by non-axis-aligned contours in multiple patches')
+    report['segment_rejected_grid'] = dict(spacing=[chosen.sx, chosen.sy], score=chosen.support,
+                                           size=[len(chosen.x_lines)-1, len(chosen.y_lines)-1],
+                                           source=chosen.metadata['source'])
+    report['selected_score'] = 0.
+    return None
