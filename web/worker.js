@@ -81,8 +81,9 @@ self.onmessage = async ({ data }) => {
     const meta = JSON.parse(await py.runPythonAsync("process('/job/input', _request, '/job/output')"));
     const read = (name) => py.FS.readFile('/job/output/' + name).slice().buffer;
     const result = { type: 'result', id: data.id, meta, output: read('result.png'),
-      native: read('native.png'), base: read('base.png'), original: read('original.png'), diagnostics: {} };
-    const transfers = [result.output, result.native, result.base, result.original];
+      native: read('native.png'), base: read('base.png'), original: meta.reuse_preview ? null : read('original.png'), diagnostics: {} };
+    const transfers = [result.output, result.native, result.base];
+    if (result.original) transfers.push(result.original);
     if (meta.debug) {
       result.debugZip = read('debug.zip'); transfers.push(result.debugZip);
       for (const name of ['fft.png', 'edges.png', 'grid.png', 'profiles.png', 'curvature.png']) {
@@ -91,11 +92,12 @@ self.onmessage = async ({ data }) => {
     }
     self.postMessage(result, transfers);
   } catch (error) {
-    self.postMessage({ type: 'error', id: data.id, message: String(error.message || error) });
+    const message = String(error.message || error);
+    self.postMessage({ type: 'error', id: data.id, message,
+      code: /MemoryError|Unable to allocate|out of memory|memory access out of bounds/i.test(message) ? 'memory' : 'processing' });
   } finally {
-    if (py) {
-      py.runPython("shutil.rmtree('/job', ignore_errors=True)\nglobals().pop('_request', None)\nglobals().pop('_scale', None)");
-    }
-    busy = false;
+    try {
+      if (py) py.runPython("shutil.rmtree('/job', ignore_errors=True)\nglobals().pop('_request', None)\nglobals().pop('_scale', None)");
+    } finally { busy = false; }
   }
 };

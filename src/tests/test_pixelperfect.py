@@ -22,6 +22,100 @@ from pixelperfect.palette import palette_rgb, PALETTE_IDS
 from pixelperfect.color_math import rgb_to_lab, delta_e_2000, nearest
 
 
+@pytest.mark.parametrize('shape', [(1, 1), (65, 127), (130, 134)])
+def test_striped_features_match_full_resolution_reference(shape):
+    # Include both sides of 64-row boundaries and odd/even FFT dimensions.
+    rgba = np.random.default_rng(73).random((*shape, 4), dtype=np.float32)
+    expected_x = np.zeros(shape, np.float32)
+    expected_y = np.zeros(shape, np.float32)
+    gray = np.zeros(shape, np.float32)
+    for c, weight in enumerate((.299, .587, .114, 0.)):
+        values = rgba[..., c] * rgba[..., 3] if c < 3 else rgba[..., 3]
+        expected_x[:, 1:] = np.maximum(expected_x[:, 1:], np.abs(np.diff(values, axis=1)))
+        expected_y[1:] = np.maximum(expected_y[1:], np.abs(np.diff(values, axis=0)))
+        gray += weight * values
+    gray += .5 * (1 - rgba[..., 3])
+    actual = extract_features(rgba)
+    np.testing.assert_array_equal(actual.gradient_x, expected_x)
+    np.testing.assert_array_equal(actual.gradient_y, expected_y)
+    spectrum = np.log1p(abs(np.fft.rfft2(gray))).astype(np.float32)
+    np.testing.assert_array_equal(actual.spectrum, spectrum)
+    np.testing.assert_array_equal(actual.spectral_x, spectrum[1:].mean(axis=0) if shape[0] > 1 else spectrum[0])
+    sy = spectrum[:, 1:].mean(axis=1) if shape[1] > 1 else spectrum[:, 0]
+    np.testing.assert_array_equal(actual.spectral_y, sy[:shape[0] // 2 + 1])
+
+
+@pytest.mark.parametrize('shape', [(1, 1), (65, 127), (130, 134)])
+def test_fft_thumbnail_coordinates_match_full_fft(shape):
+    from pixelperfect.diagnostics import _fft_preview, _preview_axes
+    gray = np.random.default_rng(18).random(shape)
+    half = np.log1p(abs(np.fft.rfft2(gray))).astype(np.float32)
+    expected = np.fft.fftshift(np.log1p(abs(np.fft.fft2(gray)))).astype(np.float32)
+    x, y = _preview_axes(shape[1], shape[0], limit=37)
+    np.testing.assert_allclose(_fft_preview(half, shape[1], limit=37), expected[np.ix_(y, x)], atol=1e-6)
+
+
+def test_jpg_with_mpo_primary_photo_and_caller_frame(tmp_path):
+    path = tmp_path / 'camera.jpg'  # A JPEG extension does not imply one picture.
+    primary = Image.new('RGB', (73, 65), '#327cbe')
+    primary.save(path, format='MPO', save_all=True, append_images=[Image.new('RGB', (32, 20), 'red')])
+    with Image.open(path) as opened:
+        assert opened.format == 'MPO' and opened.n_frames == 2
+        expected = np.asarray(opened.convert('RGBA'), dtype=np.float32) / 255
+        opened.seek(1)
+        data = load_image(opened)
+        assert opened.tell() == 1
+        assert data.metadata == dict(format='MPO', frames=2, selected_frame=0, selection='declared MP primary image')
+    np.testing.assert_array_equal(data.rgba, expected)
+    np.testing.assert_array_equal(load_image(path).rgba, expected)
+    result = pixelize(path)
+    assert result.grid['input_size'] == [73, 65]
+    assert any('MPO photo:' in warning for warning in result.diagnostics['warnings'])
+    # Honor a unique declared primary, including when it isn't the first frame.
+    with Image.open(path) as opened:
+        opened.mpinfo[0xB002][0]['Attribute']['MPType'] = 'Undefined'
+        opened.mpinfo[0xB002][1]['Attribute']['MPType'] = 'Baseline MP Primary Image'
+        assert load_image(opened).rgba.shape == (20, 32, 4)
+        assert opened.tell() == 0
+        opened.mpinfo[0xB002][1]['Attribute']['MPType'] = 'Undefined'
+        assert load_image(opened).metadata['selection'] == 'first MPO image'
+
+
+@pytest.mark.parametrize('format', ['GIF', 'PNG', 'TIFF'])
+def test_other_multiframe_formats_still_rejected(tmp_path, format):
+    path = tmp_path / 'frames.bin'
+    Image.new('RGB', (12, 10), 'red').save(path, format=format, save_all=True,
+                                          append_images=[Image.new('RGB', (12, 10), 'blue')])
+    with pytest.raises(ValueError, match=f'format={format}, frames=2'):
+        load_image(path)
+
+
+@pytest.mark.parametrize('mode', ['RGB', 'RGBA', 'P', 'L', 'CMYK'])
+def test_striped_image_conversion_matches_pillow(mode):
+    pixels = np.random.default_rng(44).integers(0, 256, (137, 79, 4), dtype=np.uint8)
+    image = Image.fromarray(pixels).convert(mode)
+    if mode == 'P':
+        image.info['transparency'] = 0
+    expected = np.array(image.convert('RGBA'), dtype=np.float32) / 255
+    expected[expected[..., 3] == 0, :3] = 0
+    data = load_image(image)
+    np.testing.assert_array_equal(data.rgba, expected)
+    np.testing.assert_array_equal(to_pil(data.rgba), np.rint(expected * 255).astype(np.uint8))
+    # Reading must leave the externally owned image usable.
+    assert image.getpixel((0, 0)) is not None
+
+
+@pytest.mark.parametrize('alpha_mode', ['auto', 'binary', 'coverage'])
+def test_full_size_fallback_keeps_original_and_does_not_mutate_input(alpha_mode):
+    image = np.full((67, 71, 4), [28, 70, 138, 75], np.uint8)
+    original = image.copy()
+    result = pixelize(image, Config(alpha_mode=alpha_mode, photo_mode='off'))
+    assert result.grid['fallback']
+    np.testing.assert_array_equal(image, original)
+    np.testing.assert_array_equal(result.debug_data['source'], original)
+    np.testing.assert_array_equal(result.image, np.zeros_like(original) if alpha_mode == 'binary' else original)
+
+
 # Pixel hashes independently reproduced with pre-color revision d225caa.
 # Protect the original detector and sampler when changing optional color features.
 @pytest.mark.parametrize('name,size,digest', [
@@ -392,6 +486,50 @@ def test_noise_rejection_searches_all_proposals_without_chance_grid():
         image=np.ones((96,96,4),np.float32)
         image[...,:3]=np.random.default_rng(seed).random((96,96,3))
         assert detect(image)[0] is None
+
+
+@pytest.mark.parametrize('variant', ['original', 'flip', 'crop', 'slight_blur'])
+def test_irregular_anime_grid_is_recovered_before_photo_fallback(variant):
+    # Real reported failure: visible pixel steps have varying width/phase.
+    # This file has a .jpg name but PNG contents; no JPEG decoder differences.
+    source = Path(__file__).resolve().parents[2] / 'input/1770467992323.jpg'
+    with Image.open(source) as opened:
+        assert opened.format == 'PNG'
+        image = opened.copy()
+    if variant == 'flip':
+        image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+    elif variant == 'crop':
+        image = image.crop((3, 5, 1021, 1022))
+    elif variant == 'slight_blur':
+        image = image.filter(ImageFilter.GaussianBlur(.35))
+    result = pixelize(image)
+    assert not result.grid['stylized'] and not result.grid['fallback']
+    assert not result.grid['native_preserved']
+    # No exact ground-truth lattice exists for this AI-style picture. Check the
+    # observed cell-scale range, source coverage, and actual measured support.
+    assert 90 <= result.image.width <= 112 and 90 <= result.image.height <= 112
+    assert 9 <= result.grid['sx'] <= 11 and 9 <= result.grid['sy'] <= 11
+    for axis, extent in zip(('x', 'y'), image.size):
+        cuts = result.grid[axis + '_lines']
+        assert cuts[0] == 0 and cuts[-1] == extent
+        assert np.all(np.diff(cuts) > 0)
+    search = result.diagnostics['grid_search']
+    refinement = search['spacing_refinement']
+    assert len(refinement['candidates']) <= 15
+    assert .30 <= result.confidence < .45
+    if variant in ('original', 'flip'):
+        # The user's 0.30 threshold now accepts the original 0.302 candidate.
+        assert not refinement['attempted']
+        assert .30 <= refinement['initial_score'] < .31
+        assert result.image.size == (96, 96)
+    else:
+        assert refinement['attempted'] and refinement['initial_score'] < .30
+    assert not search['image_routing']['applied']
+    assert 'Low heuristic' in result.diagnostics['warnings'][0]
+    if variant == 'original':
+        repeated = pixelize(source, Config(photo_mode='off'))
+        assert result.grid == repeated.grid
+        np.testing.assert_array_equal(result.image, repeated.image)
 
 
 # SAMPLING
@@ -1199,6 +1337,77 @@ def test_native_preservation_still_allows_color_postprocessing_and_export(tmp_pa
 
 
 # ORDINARY-IMAGE RENDERING: keep the original recovery path for pixel evidence.
+def uncertain_sharp_scene(size=(1024, 768)):
+    """A sharply drawn sloping roof with too few consistent lattice boundaries."""
+    from PIL import ImageDraw
+    image = Image.new('RGBA', size, (0, 0, 0, 0))
+    w, h = size
+    d = ImageDraw.Draw(image)
+    d.polygon([(w//7, h*6//7), (w//2, h//8), (w*6//7, h*6//7)], fill='#2d354e')
+    d.polygon([(w//7+18, h*6//7-12), (w//2, h//8+30), (w*6//7-18, h*6//7-12)], fill='#dbaa48')
+    return image
+
+
+def test_no_grid_sharp_art_is_rendered_instead_of_returned_unchanged():
+    image = uncertain_sharp_scene()
+    previous = pixelize(image, Config(photo_mode='off'))
+    assert previous.grid['fallback']
+    result = pixelize(image)
+    assert result.grid['stylized'] and not result.grid['fallback']
+    assert result.image.size == (256, 192) and result.confidence == 0
+    assert 'no reliable grid' in result.diagnostics['grid_search']['image_routing']['reason']
+    assert result.image.getpixel((0, 0)) == (0, 0, 0, 0)
+    np.testing.assert_array_equal(result.image, pixelize(image).image)
+    colored = pixelize(image, Config(colors=4))
+    assert colored.grid == result.grid
+    np.testing.assert_array_equal(colored.native_image, result.image)
+
+
+@pytest.mark.parametrize('factor', [35, 40])
+def test_large_scanlines_recover_source_spacing_without_resizing(factor):
+    truth = native_scene(18)
+    result = pixelize(enlarged(truth, factor))
+    assert result.grid['sx'] == result.grid['sy'] == factor
+    assert result.image.size == truth.size
+    np.testing.assert_array_equal(result.image, truth)
+    assert result.diagnostics['grid_search']['feature_sampling'].startswith('96 original-resolution')
+    assert result.debug_data['profile_x'].size == truth.width * factor
+    assert result.debug_data['profile_y'].size == truth.height * factor
+    assert result.debug_data['spectrum_size'] == (512, 512)
+
+
+def test_large_generated_sampler_keeps_center_stroke_between_area_samples():
+    from pixelperfect.grid import GridCandidate
+    from pixelperfect.natural import render_cells
+    # 2048^2 enters bounded sampling. The seam at cell center misses all 8x8
+    # area positions; the original supported-center sampler still sees it.
+    source = np.full((2048, 2048, 4), .55, np.float32)
+    source[..., 3] = 1
+    source[:, 16:18, :3] = .05
+    cuts = np.arange(0, 2049, 32)
+    grid = GridCandidate(32., 32., 0., 0., cuts, cuts, metadata={'stylized': True})
+    cells = render_cells(source, grid, Config())
+    assert cells.structure['rendering_samples_per_cell'] == 64
+    np.testing.assert_allclose(cells.rgba[:, 0, :3], .05, atol=1e-6)
+    np.testing.assert_allclose(cells.rgba[:, 1:, :3], .55, atol=1e-6)
+    np.testing.assert_array_equal(cells.rgba[..., 3], 1.)
+
+
+def test_large_generated_grid_diagnostics_and_full_coverage(tmp_path):
+    import json
+    image = uncertain_sharp_scene((2400, 1800))
+    result = pixelize(image)
+    assert result.grid['stylized'] and max(result.image.size) == 256
+    assert result.grid['x_lines'][-1] == 2400 and result.grid['y_lines'][-1] == 1800
+    save_result(result, tmp_path/'roof.png', debug=True)
+    debug = tmp_path/'debug/roof'
+    for name in ('fft', 'edges', 'grid', 'profiles', 'curvature'):
+        with Image.open(debug/(name+'.png')) as preview:
+            assert max(preview.size) <= 1100
+    info = json.loads((debug/'info.json').read_text())
+    assert info['diagnostics']['grid_search']['feature_sampling'].startswith('96 original-resolution')
+
+
 @pytest.mark.parametrize('seed,size', [(0, (768, 576)), (7, (576, 768)), (18, (1024, 1024))])
 def test_ordinary_scene_gets_a_conservative_generated_grid(seed, size):
     image = continuous_scene(seed, size)

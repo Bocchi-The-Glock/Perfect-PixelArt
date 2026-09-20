@@ -3,6 +3,8 @@ from dataclasses import dataclass, field, replace
 import numpy as np
 from .features import peaks, smooth
 
+_MIN_GRID_SCORE = .30
+
 
 @dataclass
 class GridCandidate:
@@ -130,8 +132,10 @@ def _detect_grid(features, shape, config):
     axes = [_axis(p, spec, config.min_pixel_size, min(config.max_pixel_size, n / 2))
             for p, spec, n in [(features.profile_x, features.spectral_x, w),
                                (features.profile_y, features.spectral_y, h)]]
-    report = {"axis_proposals": [a["proposals"] for a in axes], "candidates": []}
+    report = {"axis_proposals": [a["proposals"] for a in axes], "candidates": [],
+              "axis_evidence": [{"peaks": len(a["pos"]), "contrast": a["contrast"]} for a in axes]}
     if any(len(a["pos"]) < 4 or a["contrast"] < .25 for a in axes):
+        report["rejection"] = "insufficient edge peaks or projection contrast"
         return None, report
     pool = []
     for a in axes:
@@ -188,15 +192,54 @@ def _detect_grid(features, shape, config):
         score = float(np.mean([m["score"] for m in ms]))
         finalists.append((score, sizes, origin, phases, refined, ms))
     if not finalists:
+        report["rejection"] = "no candidate spacing within search range"
         return None, report
     finalists.sort(key=lambda c: (-c[0], -c[1][0]))
+    # FFT bins/gap modes propose a scale, not a continuous optimum. With drifting
+    # contours a small spacing change also changes which local edges _walk uses.
+    # Before rejecting a near-threshold result, examine a bounded neighbourhood
+    # of the three finalists. Successful existing detections remain untouched.
+    initial_score = finalists[0][0]
+    report["spacing_refinement"] = {"attempted": False, "initial_score": initial_score,
+                                    "candidates": []}
+    if (.25 <= initial_score < _MIN_GRID_SCORE
+            and min(m["unit_gaps"] for m in finalists[0][5]) >= .10):
+        extra = []
+        seen = [ss for _, ss, _, _, _, _ in finalists]
+        for _, sizes, origin, _, _, _ in finalists:
+            # At most five trials per finalist. Scale both axes together to keep
+            # the original aspect ratio and the square-mode constraint.
+            step = max(.25, round(min(sizes) * .02 * 4) / 4)
+            centre = round(sizes[0] / step) * step
+            for offset in (-2, -1, 0, 1, 2):
+                sx = centre + offset * step
+                ss = (sx, sizes[1] * sx / sizes[0])
+                if not (config.min_pixel_size <= min(ss) and
+                        max(ss) <= min(config.max_pixel_size, w / 2, h / 2)):
+                    continue
+                if any(np.allclose(ss, old, rtol=0., atol=1e-7) for old in seen):
+                    continue
+                seen.append(ss)
+                pp = [_phase(a, s) for a, s in zip(axes, ss)]
+                cc = [_walk(a, s, p, config.local_warp == "auto") for a, s, p in zip(axes, ss, pp)]
+                mm = [_measure(a, s, c) for a, s, c in zip(axes, ss, cc)]
+                value = float(np.mean([m["score"] for m in mm]))
+                extra.append((value, ss, origin + " local spacing refinement", pp, cc, mm))
+        report["spacing_refinement"].update(attempted=True, candidates=[
+            {"spacing": list(ss), "score": value, "axes": mm} for value, ss, _, _, _, mm in extra])
+        # The same acceptance thresholds apply; adding trials is not permission
+        # to lower the evidence requirement or report an artificial confidence.
+        finalists.extend(c for c in extra if min(m["unit_gaps"] for m in c[5]) >= .10)
+        finalists.sort(key=lambda c: (-c[0], -c[1][0]))
     score, sizes, origin, phases, lines, metrics = finalists[0]
     report["candidates"] = [{"spacing": list(ss), "source": src, "score": value, "axes": mm}
                             for value, ss, src, _, _, mm in ranked]
     report["refined"] = [{"spacing": list(ss), "score": value, "axes": mm}
                          for value, ss, _, _, _, mm in finalists]
     report["selected_score"] = score
-    if score < .31 or min(m["unit_gaps"] for m in metrics) < .10:
+    if score < _MIN_GRID_SCORE or min(m["unit_gaps"] for m in metrics) < .10:
+        report["rejection"] = (f"grid score below {_MIN_GRID_SCORE:.2f}" if score < _MIN_GRID_SCORE else
+                               "unit cell interval support below 0.10 in one axis")
         return None, report
     warped = any(len(c) != len(make_lines(n, s, p)) or not np.allclose(c, make_lines(n, s, p))
                  for c, n, s, p in zip(lines, (w, h), sizes, phases))
@@ -252,11 +295,17 @@ def _native_resolution(features, shape, chosen, report):
     detail = all(a['turn_fraction'] >= .08 and a['turn_count'] >= 8
                  and a['supporting_lines'] >= 3 for a in axes)
     coarse_supported = len(boundary_fit) == 2 and min(boundary_fit) >= .80
-    preserve = chosen is not None and sharp and detail and not coarse_supported
+    # Without a competing grid, sharp reversals alone also describe white or
+    # grain noise. Require repeated flat pixel regions alongside those details.
+    flat_fraction = [float(np.count_nonzero(g < .005) / g.size)
+                     for g in (features.gradient_x, features.gradient_y)]
+    preserve = sharp and detail and not coarse_supported and (chosen is not None or min(flat_fraction) > .20)
     report['native_resolution'] = dict(
         axes=list(axes), sharpness_ratio=list(features.ramp_ratio),
         coarse_boundary_fit=boundary_fit, selected=bool(preserve),
-        reason='one-pixel detail contradicts coarse grid' if preserve else 'insufficient native detail evidence')
+        flat_neighbor_fraction=flat_fraction,
+        reason=('repeated sharp one-pixel detail' if preserve and chosen is None else
+                'one-pixel detail contradicts coarse grid' if preserve else 'insufficient native detail evidence'))
     if not preserve:
         return chosen, report
     report['rejected_coarse_grid'] = None if chosen is None else dict(
@@ -274,8 +323,8 @@ def _native_resolution(features, shape, chosen, report):
 def _exact_two_pixel_grid(features, shape, config):
     """Recover clean 2x repetition before smoothed projections erase its period.
 
-    All changed rows/columns, including weak changes, must align. Isolated noise
-    invalidates this exact-repetition shortcut; no resampling or color guessing.
+    All examined changes, including weak changes, must align. Large-image mode
+    examines full-length scanlines and records that restricted evidence scope.
     """
     if not config.min_pixel_size <= 2 <= config.max_pixel_size:
         return None
@@ -287,7 +336,34 @@ def _exact_two_pixel_grid(features, shape, config):
         phases.append(float(pos[0] % 2))
     h, w = shape[:2]
     return GridCandidate(2., 2., *phases, make_lines(w, 2, phases[0]), make_lines(h, 2, phases[1]),
-                         .95, metadata={'source': 'exact two-pixel repetition'})
+                         .95 if features.mode == 'full image' else .85,
+                         metadata={'source': 'exact two-pixel repetition', 'evidence_scope': features.mode})
+
+
+def _exact_integer_grid(features, shape, config):
+    """Rescue rejected integer repeats from unsmoothed edge coordinates.
+
+    Projection peaks can hide adjacent cell boundaries behind stronger repeated
+    shapes. A common divisor is usable only when every examined nonzero change
+    fits it in both axes; even faint interpolation/noise changes invalidate it.
+    """
+    sizes, phases = [], []
+    for gradient, axis in ((features.gradient_x, 0), (features.gradient_y, 1)):
+        positions = np.flatnonzero(gradient.max(axis=axis) > 1e-6)
+        if len(positions) < 4:
+            return None
+        spacing = int(np.gcd.reduce(np.diff(positions)))
+        if spacing < max(2, config.min_pixel_size) or spacing > config.max_pixel_size:
+            return None
+        sizes.append(float(spacing))
+        phases.append(float(positions[0] % spacing))
+    if (config.square and sizes[0] != sizes[1]) or max(sizes) / min(sizes) > 1.12:
+        return None
+    h, w = shape[:2]
+    return GridCandidate(*sizes, *phases, make_lines(w, sizes[0], phases[0]),
+                         make_lines(h, sizes[1], phases[1]),
+                         .95 if features.mode == 'full image' else .85,
+                         metadata={'source': 'validated integer repetition', 'evidence_scope': features.mode})
 
 
 def detect_grid(features, shape, config):
@@ -297,6 +373,16 @@ def detect_grid(features, shape, config):
         chosen = exact
         report['evidence_model'] = 'exact two-pixel repetition'
         report['exact_two_pixel_grid'] = dict(spacing=[2., 2.], phase=[exact.phase_x, exact.phase_y],
-                                             score=exact.support, all_changes_aligned=True)
+                                             score=exact.support, all_changes_aligned=features.mode == 'full image',
+                                             evidence_scope=features.mode)
         report['selected_score'] = exact.support
+    elif chosen is None:
+        integer = _exact_integer_grid(features, shape, config)
+        if integer is not None:
+            chosen = integer
+            report['evidence_model'] = 'validated integer repetition'
+            report['integer_repetition'] = dict(spacing=[integer.sx, integer.sy],
+                                                phase=[integer.phase_x, integer.phase_y],
+                                                evidence_scope=features.mode)
+            report['selected_score'] = integer.support
     return _native_resolution(features, shape, chosen, report)

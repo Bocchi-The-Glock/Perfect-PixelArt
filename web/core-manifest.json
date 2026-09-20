@@ -89,21 +89,21 @@
       "unique_colors": 275
     }
   ],
-  "bundle_sha256": "f58a9b4283e70e369d1f5c07a970902c38399dca6724809785a90014fcf743a6",
+  "bundle_sha256": "07dfbea73b1e69ec87a4c5d93f61380e28f2c257c37afcc9d803af8ea366411c",
   "files": {
     "pixelperfect/__init__.py": "de190a42208ff8d9e06558be0baea9fda3f2891b0427c509d1cb27f114a5f2c5",
-    "pixelperfect/__main__.py": "0a7131cb2f5edc3f3a0a3ae2d53d84affdc0c5c14852c714d960cc50aac4f1a5",
+    "pixelperfect/__main__.py": "54297f47e0972c3a51a0d2da96da41bf38d4df4e77977cd75e6c4e6f1c341a46",
     "pixelperfect/color_math.py": "ab735d2728ff0db7623d69f8d75dbcc407f04c903f946ed9bd029d64a45b883c",
     "pixelperfect/config.py": "87800d8a920b02699658adaa7e80ade364923d7ef3b8b73f0df39de2868da285",
-    "pixelperfect/diagnostics.py": "b00c85c8bf13e2c7364f80d8e05ffcd311e3e5b61f09224dbf3db514c608024c",
-    "pixelperfect/features.py": "6118cbb730bf90265af8bf2ad881a742b090fb0dc5676cfc1a109aafb75ad13d",
-    "pixelperfect/grid.py": "e9a8a965c7643169164df5f40c1319d70598d4db051ed1d93444457e90a2c88d",
-    "pixelperfect/image_io.py": "e175ab9f364ceff032c1621393d574dfedfbd2222dddea53a4fe7a78e0cba423",
-    "pixelperfect/natural.py": "3f918087550e678a4b9f1e596eea68241730499a0ae90f6186f5954cc8f1c7b5",
+    "pixelperfect/diagnostics.py": "3aaad16bacdf615b17a8ad21b74b6f820685551b51fe49dda612d1c7c8f0adf8",
+    "pixelperfect/features.py": "c2265de18e523aaed4c89c67f479b50b65aa9358fdfb2b36ef65857e508909dc",
+    "pixelperfect/grid.py": "d6ec37328d46cdfc373d7a712cf7b7184bfe196367d4233e95805bf8ccfe7f88",
+    "pixelperfect/image_io.py": "b787dddfd661a77428bce2d5254ff162cdd226a0a1bd96fda798d1470056034e",
+    "pixelperfect/natural.py": "fa4b38d1d28e588eb9b0b319911c54ff472e1ca65caa1dda08835cda7bb062be",
     "pixelperfect/palette.py": "bca4613883f76c83a8a4fb4610f332511b416f9eaf6bd0e350069bc1e3937cd7",
-    "pixelperfect/pipeline.py": "d08ceb5cfe9d5290a3275877bd50a5ce132cbb5b5b41d8b89b6db3b5fb9825e5",
+    "pixelperfect/pipeline.py": "c19007765f2de74a5283feb7aeeec5b0c724f0c925f3a6a1b7e17fa5562a65c5",
     "pixelperfect/sampling.py": "b3e416d851a48027485f044674af99851e31b66ab7d1d16a060ea9aca85f5b65",
     "pixelperfect/palettes.json": "d44788e6515ca7daffb7cdfb396dbd32b53a0c7f2247dbfecf9c5188667ddd89",
-    "web_bridge.py": "819a9a2b7154700c9d904921f3878a1c876c3804746beb251dd3a73141b9dad9"
+    "web_bridge.py": "47b8be9da740a280bf1b31f4e78c6ca7ea0b38cf22fd3f52b9d8950be731dc3e"
   }
 }

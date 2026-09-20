@@ -37,7 +37,16 @@ function renderState() {
   $('status-icon').textContent = visibleStatus.kind === 'busy' ? '◌' : visibleStatus.kind === 'error' ? '!' : '○';
   if (result?.meta.grid.native_preserved && visibleStatus.key === 'done') $('status').textContent = t('nativePreserved');
   if (result?.meta.grid.stylized && visibleStatus.key === 'done') $('status').textContent = t('stylized');
-  if (result) $('warnings').textContent = t(result.meta.grid.stylized ? 'stylizedHelp' : result.meta.grid.fallback ? 'fallback' : 'lowConfidence');
+  if (result) {
+    const notes = [];
+    if (result.meta.input?.frames > 1) notes.push(t('primaryPhoto', {
+      frame: result.meta.input.selected_frame + 1, count: result.meta.input.frames,
+    }));
+    if (result.meta.warnings.some(note => !note.startsWith('MPO photo:'))) {
+      notes.push(t(result.meta.grid.stylized ? 'stylizedHelp' : result.meta.grid.fallback ? 'fallback' : 'lowConfidence'));
+    }
+    $('warnings').textContent = notes.join(' ');
+  }
   const active = $('diagnostic-tabs').querySelector('.active');
   if (active) $('diagnostic-image').alt = t(active.dataset.i18n);
   for (const option of $('palette').options) {
@@ -310,8 +319,10 @@ function blobUrl(buffer, mime = 'image/png') { const url = URL.createObjectURL(n
 function showResult(data) {
   clearResult(); result = data;
   const { meta } = data;
-  if (originalUrl) URL.revokeObjectURL(originalUrl);
-  originalUrl = URL.createObjectURL(new Blob([data.original], { type: 'image/png' }));
+  if (data.original) {
+    if (originalUrl) URL.revokeObjectURL(originalUrl);
+    originalUrl = URL.createObjectURL(new Blob([data.original], { type: 'image/png' }));
+  }
   previewUnavailable = false; $('original-image').hidden = false; $('original-placeholder').hidden = true; $('original-image').src = originalUrl;
   $('result-image').src = blobUrl(data.native); $('result-image').hidden = false; $('result-placeholder').hidden = true;
   $('result-size').textContent = meta.grid.output_size.join(' × ');
@@ -372,7 +383,15 @@ function getWorker() {
         const link = document.createElement('a'); link.href = downloadUrl; link.download = result.meta.name;
         document.body.append(link); link.click(); link.remove(); setStatus('exported');
       }
-      if (data.type === 'error') setStatus('failed', 'error', { detail: data.message.trim().split('\n').at(-1) });
+      if (data.type === 'error') {
+        if (data.code === 'memory') {
+          // Release the entire Wasm heap and any traceback-held arrays. A later
+          // request creates a fresh engine, including recoloring/export retries.
+          worker.terminate(); worker = null;
+          engine = { state: 'idle', key: 'starting', detail: '' };
+          setStatus('memoryFailed', 'error');
+        } else setStatus('failed', 'error', { detail: data.message.trim().split('\n').at(-1) });
+      }
     };
     worker.onerror = event => {
       if (worker !== activeWorker) return;
@@ -396,7 +415,10 @@ $('settings').onsubmit = async event => {
   invalidate(); setBusy(true, 'process'); $('warnings').hidden = true; setStatus('reading', 'busy');
   try {
     const bytes = await file.arrayBuffer(); if (id !== generation) return;
-    getWorker().postMessage({ type: 'process', id, bytes, request: { name: file.name, config: configuration(), debug: $('debug').checked } }, [bytes]);
+    const preview = $('original-image');
+    const preview_size = !previewUnavailable && !preview.hidden && preview.naturalWidth
+      ? [preview.naturalWidth, preview.naturalHeight] : null;
+    getWorker().postMessage({ type: 'process', id, bytes, request: { name: file.name, config: configuration(), debug: $('debug').checked, preview_size } }, [bytes]);
   } catch (error) { setBusy(false); setStatus('failed', 'error', { detail: error.message }); }
 };
 $('download').onclick = () => {

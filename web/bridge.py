@@ -23,13 +23,22 @@ def process(input_path, request_json, output_directory):
                 debug=debug, debug_dir=output / "debug" if debug else None)
     result.image.save(output / "native.png")
     result.native_image.save(output / "base.png")
-    # Reuse the EXIF-corrected input; never feed canvas-decoded pixels to Python.
-    result.debug_data["source"].save(output / "original.png")
+    # The browser already displays ordinary PNG/JPEG inputs at source resolution.
+    # Avoid encoding/transferring another enormous PNG just to show that preview.
+    # MPO and a missing/mismatched preview still use the selected, oriented photo.
+    metadata = result.diagnostics['input']
+    reuse_preview = (request.get('preview_size') == result.grid['input_size']
+                     and metadata.get('frames') == 1
+                     and metadata.get('format') in ('PNG', 'JPEG', 'WEBP', 'BMP', 'GIF'))
+    if not reuse_preview:
+        result.debug_data["source"].save(output / "original.png")
     if debug:
         with zipfile.ZipFile(output / "debug.zip", "w", zipfile.ZIP_DEFLATED) as archive:
             for path in sorted((output / "debug").iterdir()):
                 archive.write(path, f"output/debug/{stem}/{path.name}")
     return json.dumps(dict(name=stem + ".png", grid=result.grid, confidence=result.confidence,
+                           input=result.diagnostics['input'],
+                           reuse_preview=reuse_preview,
                            timings=result.timings, warnings=result.diagnostics["warnings"],
                            config=settings, debug=debug, color_processing=result.diagnostics["color_processing"],
                            export_size=[result.image.width * config.scale, result.image.height * config.scale],

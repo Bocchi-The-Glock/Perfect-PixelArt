@@ -23,7 +23,7 @@ def parser():
                    help="auto: sampled alpha; binary: explicit threshold; coverage: averaged alpha")
     p.add_argument("--local-warp", choices=("auto", "off"), default="auto")
     p.add_argument("--photo-mode", choices=("auto", "off"), default="auto",
-                   help="conservative pixelization for ordinary images; off keeps only grid recovery")
+                   help="pixelize ordinary images and unreliable-grid inputs; off disables rendering fallback")
     p.add_argument("--min-pixel-size", type=float, default=2)
     p.add_argument("--max-pixel-size", type=float, default=64)
     p.add_argument("--square", action="store_true", help="require equal nominal x/y spacing")
@@ -72,6 +72,9 @@ def main(argv=None):
             for name, seconds in result.timings.items():
                 print(f"  {name}: {seconds:.4f} s", file=sys.stderr)
         return 0
+    except MemoryError:
+        print("pixelperfect: error: insufficient memory for this image; use a machine with more available memory.", file=sys.stderr)
+        return 2
     except (ValueError, TypeError, OSError) as exc:
         print(f"pixelperfect: error: {exc}", file=sys.stderr)
         return 2

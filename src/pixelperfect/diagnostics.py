@@ -18,10 +18,26 @@ def _json_safe(value):
     return value
 
 
-def _display(image, title, limit=1024, lines=None):
-    source_width, source_height = image.size
-    image = image.copy()
-    image.thumbnail((limit, limit), Image.Resampling.NEAREST)
+def _preview_axes(width, height, limit=1024):
+    factor = min(1., limit / max(width, height))
+    pw, ph = max(1, round(width * factor)), max(1, round(height * factor))
+    return ((np.arange(pw) + .5) * width / pw).astype(int), ((np.arange(ph) + .5) * height / ph).astype(int)
+
+
+def _fft_preview(half, width, limit=1024):
+    """Sample the shifted, Hermitian full spectrum without materializing it."""
+    height = len(half)
+    x, y = _preview_axes(width, height, limit)
+    fx, fy = (x - width // 2) % width, (y - height // 2) % height
+    reflected = fx > width // 2
+    return half[np.where(reflected[None, :], -fy[:, None] % height, fy[:, None]),
+                np.where(reflected, width - fx, fx)[None, :]]
+
+
+def _display(image, title, limit=1024, lines=None, source_size=None):
+    source_width, source_height = source_size or image.size
+    x, y = _preview_axes(*image.size, limit)
+    image = image.resize((len(x), len(y)), Image.Resampling.NEAREST)
     frame = Image.new("RGB", (max(520, image.width), image.height + 42), "#20232b")
     left = (frame.width - image.width) // 2
     frame.paste(image, (left, 42))
@@ -62,28 +78,35 @@ def write_debug(result, original=None, directory=None, export_path=None, export_
     debug = result.debug_data
     draw_grid = not result.grid["fallback"] and not result.grid.get("native_preserved", False)
     w, h = result.grid["input_size"]
-    half = debug["spectrum"]
-    tail = half[:, 1:-1] if w % 2 == 0 else half[:, 1:]
-    mirrored = tail[(-np.arange(h)) % h, ::-1]
-    spectrum = np.fft.fftshift(np.concatenate((half, mirrored), axis=1))
+    # Full-image mode shares its spectrum with detection; large-image mode
+    # displays a bounded source patch and detects using full-length scanlines.
+    fw, fh = debug.get('spectrum_size', (w, h))
+    spectrum = _fft_preview(debug["spectrum"], fw)
     low, high = float(spectrum.min()), float(np.percentile(spectrum, 99.5))
     pixels = np.clip((spectrum - low) / max(high - low, 1e-8), 0, 1)
     fft = Image.fromarray(np.rint(pixels * 255).astype(np.uint8)).convert("RGB")
     fft_lines = None
     if draw_grid and not result.grid.get('stylized', False):
-        fft_lines = ([w // 2 + offset * w / result.grid["sx"] for offset in (-1, 1)],
-                     [h // 2 + offset * h / result.grid["sy"] for offset in (-1, 1)])
+        fft_lines = ([fw // 2 + offset * fw / result.grid["sx"] for offset in (-1, 1)],
+                     [fh // 2 + offset * fh / result.grid["sy"] for offset in (-1, 1)])
     fft_title = ("Image FFT: generated rendering grid; no detected reciprocal spacing" if result.grid.get('stylized', False)
                  else "Image FFT: log(1+|F|); red = selected reciprocal spacing")
-    _display(fft, fft_title, lines=fft_lines).save(directory / "fft.png")
-    ex, ey = debug["edge_x"], debug["edge_y"]
+    if (fw, fh) != (w, h):
+        fft_title = f"FFT: {fw}x{fh} source patch (display); detector uses full-length scanlines"
+    _display(fft, fft_title, lines=fft_lines, source_size=(fw, fh)).save(directory / "fft.png")
+    x, y = _preview_axes(w, h)
+    if debug['edge_x'].shape == (h, w):
+        ex = debug["edge_x"][np.ix_(y, x)]
+        ey = debug["edge_y"][np.ix_(y, x)]
+    else:
+        ex, ey = debug['edge_x'], debug['edge_y']
     # Independent x/y derivatives remain visible: x is red, y is green.
     strength = np.maximum(ex, ey)
     cap = max(float(np.percentile(strength[strength > 0], 95)), .05) if np.any(strength > 0) else 1.
     edge = np.stack((ex, ey, np.minimum(ex, ey)), axis=-1)
     edge = np.rint(np.clip(edge / cap, 0, 1) * 255).astype(np.uint8)
-    _display(Image.fromarray(edge), "Colour + alpha edges: X=red, Y=green; source resolution").save(directory / "edges.png")
-    source = debug["source"]
+    _display(Image.fromarray(edge), "Colour + alpha edges: X=red, Y=green; preview of source derivatives").save(directory / "edges.png")
+    source = debug["source"].resize((len(x), len(y)), Image.Resampling.NEAREST)
     # Neutral background is for display only; the result PNG keeps its alpha.
     bg = Image.new("RGBA", source.size, (190, 190, 190, 255))
     bg.alpha_composite(source)
@@ -91,7 +114,7 @@ def write_debug(result, original=None, directory=None, export_path=None, export_
     lines = (result.grid["x_lines"], result.grid["y_lines"]) if draw_grid else None
     title = (f"Grid {result.image.width}x{result.image.height}; "
              f"spacing {result.grid['sx']:.3f}x{result.grid['sy']:.3f}; confidence {result.confidence:.3f}")
-    _display(overlay, title, lines=lines).save(directory / "grid.png")
+    _display(overlay, title, lines=lines, source_size=(w, h)).save(directory / "grid.png")
     plots = Image.new("RGB", (1040, 620), "#20232b")
     d = ImageDraw.Draw(plots)
     for i, (profile, lines, name) in enumerate([
@@ -137,6 +160,7 @@ def write_debug(result, original=None, directory=None, export_path=None, export_
         "contour expansion: disabled",
         f"Processing: {result.timings['total']:.4f}s; with PNG/debug: {result.timings['total_with_export']:.4f}s",
         "All source pixels are covered. Display thumbnails do not affect detection.",
+        "FFT/edge preview contrast is normalized on display samples, not the full image.",
         *result.diagnostics["warnings"],
     ]
     (directory / "info.txt").write_text("\n".join(summary) + "\n", encoding="utf-8")

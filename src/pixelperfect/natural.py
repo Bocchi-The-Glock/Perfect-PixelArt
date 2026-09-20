@@ -2,10 +2,11 @@
 import numpy as np
 from .grid import GridCandidate
 from .sampling import recover_cells
+from .features import DENSE_PIXEL_LIMIT
 
 
 def route_image(rgba, features, chosen, config):
-    """Prefer recovered/native grids; synthesize a rendering grid only with soft evidence.
+    """Prefer recovered/native grids; render a bounded fallback without a lattice.
 
     This is an abstaining heuristic, not a calibrated pixel-art/photo classifier.
     A generated grid can never be coarser than an existing accepted grid.
@@ -25,7 +26,7 @@ def route_image(rgba, features, chosen, config):
     if chosen is not None:
         source = chosen.metadata['source']
         if chosen.metadata.get('native_preserved') or source in (
-                'validated interpolation knots', 'exact two-pixel repetition'):
+                'validated interpolation knots', 'exact two-pixel repetition', 'validated integer repetition'):
             return keep('native pixels or validated resampling grid')
         metrics = chosen.metadata.get('axis_metrics', [])
         if len(metrics) == 2:
@@ -36,15 +37,8 @@ def route_image(rgba, features, chosen, config):
             # This is a preservation veto, not a claim that the grid is perfect.
             if aligned or unit_support > .45:
                 return keep('repeated cell intervals or aligned grid in both axes')
-    if min(features.ramp_ratio) >= 1.25:
+    if chosen is not None and min(features.ramp_ratio) >= 1.25:
         return keep('sharp pixel-like transitions; abstain from ordinary-image rendering')
-
-    # Inspect representative original-resolution rows, never a resized grid signal.
-    rows = np.unique(np.linspace(0, h - 1, min(h, 64)).astype(int))
-    visible = rgba[rows, :, 3] > .05
-    samples = rgba[rows, :, :3][visible]
-    if len(samples) < 16 or np.max(np.ptp(samples, axis=0)) < .06:
-        return keep('flat or insufficient visible colour evidence')
 
     # About 4 source pixels per rendered pixel, bounded to 96..256 on the long side.
     # Sparse transparent subjects receive a finer budget to avoid losing their detail.
@@ -73,7 +67,8 @@ def route_image(rgba, features, chosen, config):
     # Verify the final counts too, including partial cells in square mode.
     if chosen is not None and (len(xs) < len(chosen.x_lines) or len(ys) < len(chosen.y_lines)):
         return keep('generated grid would lose recovered cells')
-    report.update(applied=True, reason='soft image without convincing pixel-grid evidence',
+    report.update(applied=True, reason=('no reliable grid; automatic pixelization' if chosen is None else
+                                       'soft image without convincing pixel-grid evidence'),
                   generated_size=[len(xs) - 1, len(ys) - 1],
                   previous_grid=None if chosen is None else dict(
                       size=[len(chosen.x_lines) - 1, len(chosen.y_lines) - 1],
@@ -96,6 +91,33 @@ def render_cells(rgba, grid, config):
     if config.sampling != 'robust':
         return cells
     xs, ys = np.rint(grid.x_lines).astype(int), np.rint(grid.y_lines).astype(int)
+
+    if rgba.shape[0] * rgba.shape[1] > DENSE_PIXEL_LIMIT:
+        # Only generated rendering grids use bounded color statistics. Recovered
+        # grids continue to use the original sampler. Keep center alpha/strokes.
+        ny, nx = cells.rgba.shape[:2]
+        fractions = (np.arange(8) + .5) / 8
+        xx = np.minimum(xs[:-1, None] + (np.diff(xs)[:, None] * fractions).astype(int), xs[1:, None] - 1)
+        yy = np.minimum(ys[:-1, None] + (np.diff(ys)[:, None] * fractions).astype(int), ys[1:, None] - 1)
+        smooth_count = 0
+        flat = cells.rgba.reshape(-1, 4)
+        for start in range(0, ny * nx, 512):
+            ids = np.arange(start, min(start + 512, ny * nx))
+            samples = rgba[yy[ids // nx, :, None], xx[ids % nx, None, :]].reshape(-1, 64, 4)
+            a = samples[..., 3:]
+            mass = np.maximum(a.sum(axis=1), 1e-8)
+            rgb = samples[..., :3]
+            mean = (rgb * a).sum(axis=1) / mass
+            variance = np.maximum(0, (rgb * rgb * a).sum(axis=1) / mass - mean * mean).max(axis=1)
+            # A thin center stroke/highlight can lie between the area samples.
+            # Its supported center must veto averaging even with low sample variance.
+            agrees = np.max(abs(flat[ids, :3] - mean), axis=1) < .12
+            smooth = (variance < .06 ** 2) & agrees & (flat[ids, 3] > 0)
+            flat[ids[smooth], :3] = mean[smooth]
+            smooth_count += int(smooth.sum())
+        cells.structure.update(rendering_sampler='64 area samples in smooth regions; supported centre at boundaries',
+                               rendering_samples_per_cell=64, averaged_smooth_cells=smooth_count)
+        return cells
 
     def sums(values):
         return np.add.reduceat(np.add.reduceat(values, ys[:-1], axis=0), xs[:-1], axis=1)

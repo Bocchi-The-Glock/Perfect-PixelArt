@@ -39,6 +39,10 @@ def pixelize(image, config=None):
     timings["fft_edges"] = perf_counter() - t
     t = perf_counter()
     chosen, search = detect_grid(features, rgba.shape, config)
+    search['feature_sampling'] = features.mode
+    fw, fh = features.spectrum_size or (w, h)
+    search['fft_view'] = dict(size=[fw, fh], origin=[(w-fw)//2, (h-fh)//2],
+                             display_only=features.spectrum_size is not None)
     timings["grid_detection"] = perf_counter() - t
     t = perf_counter()
     chosen, routing = route_image(rgba, features, chosen, config)
@@ -47,14 +51,23 @@ def pixelize(image, config=None):
     stylized = chosen is not None and chosen.metadata.get('stylized', False)
     t = perf_counter()
     warnings = []
+    source = None
+    if data.metadata.get('frames', 1) > 1:
+        warnings.append(f"MPO photo: selected frame {data.metadata['selected_frame'] + 1} of "
+                        f"{data.metadata['frames']} ({data.metadata['selection']}); supplementary images ignored.")
     if chosen is None:
-        cells = CellResult(rgba.copy(), np.zeros((h, w), np.float32))
+        # load_image owns this buffer. A full-size fallback need not allocate a
+        # second float RGBA image just to return the same pixels.
+        cells = CellResult(rgba, np.zeros((h, w), np.float32))
         alpha_mode, near_opaque = _resolve_alpha_mode(rgba[..., 3], config.alpha_mode)
         cells.structure.update(alpha_mode_requested=config.alpha_mode, alpha_mode=alpha_mode,
                                source_near_opaque_fraction=near_opaque)
         if alpha_mode == "binary":
-            cells.rgba[..., 3] = rgba[..., 3] >= .5
-            cells.rgba[cells.rgba[..., 3] == 0, :3] = 0
+            source = to_pil(rgba, True)
+            for start_row in range(0, h, 64):
+                stripe = cells.rgba[start_row:start_row + 64]
+                stripe[..., 3] = stripe[..., 3] >= .5
+                stripe[stripe[..., 3] == 0, :3] = 0
         grid = dict(sx=1., sy=1., phase_x=0., phase_y=0., x_lines=list(range(w + 1)),
                     y_lines=list(range(h + 1)), warped=False, source="no evidence")
         confidence = 0.
@@ -75,6 +88,12 @@ def pixelize(image, config=None):
     timings["sampling"] = perf_counter() - t
     t = perf_counter()
     native = to_pil(cells.rgba, data.has_alpha)
+    source = source if source is not None else to_pil(rgba, True)
+    cell_confidence, structure, input_metadata = cells.confidence, cells.structure, data.metadata
+    # Release floating source/recovery buffers before optional color work.
+    del cells, rgba, data
+    timings['prepare_images'] = perf_counter() - t
+    t = perf_counter()
     colored = process_colors(native, colors=config.colors, palette=config.palette, color_mode=config.color_mode)
     timings["palette"] = perf_counter() - t
     output = colored.image
@@ -83,14 +102,16 @@ def pixelize(image, config=None):
                 coverage="full input; integer half-open source boxes",
                 median_cell_width=float(np.median(np.diff(grid["x_lines"]))),
                 median_cell_height=float(np.median(np.diff(grid["y_lines"]))))
-    debug = dict(source=to_pil(rgba, True), spectrum=features.spectrum,
-                 edge_x=features.gradient_x, edge_y=features.gradient_y,
+    debug = dict(source=source, spectrum=features.spectrum,
+                 spectrum_size=features.spectrum_size or (w, h), feature_sampling=features.mode,
+                 edge_x=features.gradient_x if features.preview_edges is None else features.preview_edges[0],
+                 edge_y=features.gradient_y if features.preview_edges is None else features.preview_edges[1],
                  profile_x=features.profile_x, profile_y=features.profile_y,
                  curvature_x=features.curvature_x, curvature_y=features.curvature_y)
     timings["total"] = perf_counter() - start
     return PixelizeResult(output, grid, confidence, timings,
-                          dict(warnings=warnings, fallback=chosen is None,
+                          dict(warnings=warnings, input=input_metadata, fallback=chosen is None,
                                confidence_kind="uncalibrated heuristic score", grid_search=search,
-                               structure=cells.structure, selected_score=0. if stylized else search.get("selected_score"),
+                               structure=structure, selected_score=0. if stylized else search.get("selected_score"),
                                color_processing=colored.diagnostics),
-                          cells.confidence, debug, native_image=native)
+                          cell_confidence, debug, native_image=native)
