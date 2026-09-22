@@ -11,6 +11,7 @@ output/debug/
 web/tests/
 desktop/node_modules/
 desktop/dist/
+desktop/release/
 desktop/test-results/
 
 
