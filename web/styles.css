@@ -32,7 +32,9 @@ fieldset:disabled { opacity: .65; }
 .github-fab { position: fixed; right: max(18px, env(safe-area-inset-right)); bottom: max(18px, env(safe-area-inset-bottom)); z-index: 10; min-width: 120px; height: 48px; padding: 0 19px; display: flex; align-items: center; justify-content: center; gap: 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--text); font-size: 15px; font-weight: 600; letter-spacing: -.2px; line-height: 1; white-space: nowrap; box-shadow: 0 3px 12px #00000014; }
 .github-fab svg { width: 24px; height: 24px; flex-shrink: 0; }
 .github-fab:hover { background: var(--soft); color: var(--accent); }
-.top-actions { display: flex; gap: 8px; }
+.github-header-link { position: static; min-width: 0; height: 34px; padding: 0 12px; gap: 7px; font-size: 13px; box-shadow: none; }
+.github-header-link svg { width: 18px; height: 18px; }
+.top-actions { display: flex; align-items: center; flex-shrink: 0; gap: 8px; }
 .icon-button { display: flex; align-items: center; justify-content: center; gap: 5px; width: 36px; height: 34px; padding: 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
 .icon-button:hover { background: var(--soft); }
 .icon-button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
@@ -154,6 +156,7 @@ input[type="range"] { flex: 1; min-width: 0; margin: 0; accent-color: var(--acce
   .topbar { height: 54px; padding: 0 12px; gap: 6px; }
   .brand { font-size: 15px; }
   .top-actions { gap: 5px; }
+  .github-header-link { padding-inline: 8px; gap: 5px; font-size: 12px; }
   main { display: flex; flex-direction: column; padding: 12px 12px 84px; }
   main > * { width: 100%; }
   .preview-toolbar { gap: 10px; }
