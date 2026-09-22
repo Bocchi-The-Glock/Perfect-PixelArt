@@ -1,5 +1,6 @@
 // One dictionary for static labels, dynamic state and accessible names.
 const messages = {
+  githubRepo: ['访问 GitHub 仓库', 'Open GitHub repository'],
   previews: ['图片预览', 'Image previews'], background: ['预览背景', 'Background'],
   checker: ['透明棋盘', 'Checkerboard'], white: ['纯白', 'White'], darkBackground: ['深色', 'Dark'],
   zoom: ['缩放', 'Zoom'], fit: ['适应窗口', 'Fit'], original: ['原图', 'Original'], restored: ['恢复结果', 'Result'],
@@ -15,7 +16,7 @@ const messages = {
   colors: ['限定颜色数量', 'Maximum colors'], keepColors: ['不限制', 'Unlimited'], sampling: ['取色方式', 'Sampling'],
   colorPost: ['颜色处理（可选）', 'Color processing (optional)'], colorMode: ['颜色模式', 'Color mode'],
   natural: ['自然', 'Natural'], palette: ['色库', 'Palette'], usePalette: ['使用色库', 'Use palette'],
-  paletteName: ['拼豆-{brand}-{size}色', 'Beads-{brand}-{size} colors'],
+  paletteName: ['{brand}-{size}色', '{brand}-{size} colors'],
   paletteNote: ['该规格标称 {nominal} 色，当前色库实际包含 {actual} 色。', 'Named {nominal} colors; this library contains {actual} colors.'],
   colorHelp: ['在恢复结果上调整，无需重新识别网格。', 'Adjust the restored image without detecting the grid again.'],
   colorCount: ['当前 {count} 色 · {seconds} s', '{count} colors · {seconds} s'],

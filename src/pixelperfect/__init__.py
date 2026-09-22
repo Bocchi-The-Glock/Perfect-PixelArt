@@ -6,4 +6,4 @@ from .palette import ColorResult, process_colors, palette_catalog
 
 __all__ = ["Config", "PixelizeResult", "pixelize", "save_result", "export_png",
            "ColorResult", "process_colors", "palette_catalog"]
-__version__ = "0.3.0"
+__version__ = "0.1.0"

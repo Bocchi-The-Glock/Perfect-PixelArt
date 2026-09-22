@@ -197,7 +197,7 @@ def test_library_catalog_actual_counts():
     catalog = palette_catalog()
     assert [p['id'] for p in catalog] == list(PALETTE_IDS)
     assert [p['entries'] for p in catalog] == [436, 24, 48, 72, 96, 120, 144, 221, 275]
-    assert catalog[-1]['name'] == '拼豆-MARD-280色'
+    assert catalog[-1]['name'] == 'MARD-280色'
     assert catalog[-1]['nominal_size'] == 280
     assert Config().colors is None and Config().palette is None
 

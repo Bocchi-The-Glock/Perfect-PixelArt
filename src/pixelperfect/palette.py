@@ -30,7 +30,7 @@ def _libraries():
 
 
 def palette_catalog():
-    return [dict(id=p["id"], name=f"拼豆-{p['brand']}-{p['nominal_size']}色",
+    return [dict(id=p["id"], name=f"{p['brand']}-{p['nominal_size']}色",
                  brand=p["brand"], nominal_size=p["nominal_size"], entries=len(p["colors"]),
                  unique_colors=len({c["hex"].upper() for c in p["colors"]})) for p in _libraries()]
 

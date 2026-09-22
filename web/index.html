@@ -12,7 +12,7 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="./">Perfect PixelArt <span>Plus</span></a>
+    <a class="brand" href="https://github.com/Bocchi-The-Glock/Perfect-PixelArt" target="_blank" rel="noopener noreferrer" data-i18n-aria="githubRepo" data-i18n-title="githubRepo" aria-label="访问 GitHub 仓库" title="访问 GitHub 仓库">Perfect PixelArt <span>Plus</span></a>
     <div class="top-actions">
       <button id="theme-toggle" class="icon-button" type="button" aria-label="切换夜间模式" title="切换夜间模式">
         <svg class="moon-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 13A9 9 0 0 1 11 3.2 9 9 0 1 0 20.8 13Z"/></svg>
@@ -74,11 +74,12 @@
             <label><span data-i18n="alpha">透明度</span><select id="alpha-mode"><option value="auto" data-i18n="alphaAuto">保留采样透明度</option><option value="coverage" data-i18n="coverage">按区域覆盖率平均</option><option value="binary" data-i18n="binary">二值透明度</option></select></label>
             <label><span data-i18n="warp">局部网格调整</span><select id="local-warp"><option value="auto" data-i18n="auto">自动</option><option value="off" data-i18n="off">关闭</option></select></label>
           </div>
-          <div class="check-settings"><label class="check"><input id="square" type="checkbox"><span data-i18n="square">强制正方形网格</span></label><label class="check"><input id="debug" type="checkbox" checked><span data-i18n="debug">生成处理过程</span></label></div>
           <details class="advanced"><summary data-i18n="more">更多设置</summary><div class="advanced-settings">
             <label><span data-i18n="minSpacing">最小间距</span><input id="min-size" type="number" min="1" step="any" value="2"></label>
             <label><span data-i18n="maxSpacing">最大间距</span><input id="max-size" type="number" min="1" step="any" value="64"></label>
-          </div><label class="check"><input id="photo-mode" type="checkbox" checked><span data-i18n="photoMode">未识别网格时自动像素化</span></label></details>
+          </div>
+          <div class="check-settings"><label class="check"><input id="square" type="checkbox"><span data-i18n="square">强制正方形网格</span></label><label class="check"><input id="debug" type="checkbox" checked><span data-i18n="debug">生成处理过程</span></label></div>
+          <label class="check"><input id="photo-mode" type="checkbox" checked><span data-i18n="photoMode">未识别网格时自动像素化</span></label></details>
         </fieldset>
       </form>
       <form id="color-settings" class="color-settings">
@@ -104,6 +105,10 @@
     <div class="warning-box" id="warnings" hidden role="alert"></div>
     <details class="diagnostics" id="diagnostics" hidden><summary data-i18n="diagnostics">处理过程</summary><div id="diagnostic-tabs" class="diagnostic-tabs"></div><div class="diagnostic-preview"><img id="diagnostic-image" alt=""></div></details>
   </main>
+  <a id="github-link" class="github-fab" href="https://github.com/Bocchi-The-Glock/Perfect-PixelArt" target="_blank" rel="noopener noreferrer" data-i18n-aria="githubRepo" data-i18n-title="githubRepo" aria-label="访问 GitHub 仓库" title="访问 GitHub 仓库">
+    <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82A7.65 7.65 0 0 1 8 3.86c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+    <span>GitHub</span>
+  </a>
   <noscript>Please enable JavaScript / 请启用 JavaScript。</noscript>
 </body>
 </html>

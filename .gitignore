@@ -9,3 +9,8 @@ src/dist/
 build/
 output/debug/
 web/tests/
+desktop/node_modules/
+desktop/dist/
+desktop/test-results/
+
+

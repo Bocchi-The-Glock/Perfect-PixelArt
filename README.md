@@ -1,5 +1,7 @@
 # Perfect PixelArt Plus
 
+**桌面版（Windows / macOS）**：共用现有网页与 Python 核心，打包入口位于 [`desktop/`](desktop/README.md)。Windows 可导出免安装 EXE；Mac 使用同一份代码在 macOS 构建 DMG/ZIP。安装包包含离线运行时，使用者不需要安装 Python 或启动网页服务器。
+
 将伪像素画恢复为原生低分辨率 PNG；对缺少可信像素网格的普通照片、插画，尝试保守的像素化。运行依赖仅 **NumPy、Pillow**；pytest 只用于测试。不需要 SciPy、OpenCV、Matplotlib 或网络服务。
 
 本版首先改进网格识别，撤回 0.2.1 的整格描黑、轮廓补实规则。算法独立实现；对比脚本直接调用未修改的 perfectPixel-main 公开入口，由原项目选择后端，没有复制其算法代码。
