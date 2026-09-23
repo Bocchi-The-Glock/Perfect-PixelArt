@@ -1,7 +1,7 @@
 # RealPixelArt
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?logo=python&logoColor=white)
-![License](https://img.shields.io/badge/License-Not%20specified-lightgrey.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
 
 ## 简介
 
