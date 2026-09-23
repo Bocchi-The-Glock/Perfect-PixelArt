@@ -62,6 +62,8 @@ jobs:
           publish_branch: gh-pages
           publish_dir: ./build/pages
           enable_jekyll: false
+          # Retrying after enabling Pages must push even if the site is unchanged.
+          allow_empty_commit: true
           # This branch contains generated files only. Keep commit history.
           keep_files: false
           force_orphan: false

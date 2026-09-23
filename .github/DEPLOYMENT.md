@@ -75,8 +75,10 @@ Bocchi-The-Glock/Real-PixelArt 的 main 分支收到 push
 1. **Settings → Pages → Build and deployment**。
 2. **Source：Deploy from a branch**。
 3. **Branch：gh-pages**，文件夹选 **/ (root)**，点 **Save**。
-4. 等待目标仓库 Actions 中的 **pages build and deployment** 成功。
-5. 访问 **https://realpixelart.github.io/**，用上传图片、生成、下载验证页面。
+4. 确认目标仓库 **Settings → Actions → General** 没有禁用 Actions；组织策略也需要允许 Pages 发布。
+5. 回到源码仓库的 **Deploy RealPixelArt website → Run workflow → main**，再运行一次，让开启 Pages 后的目标分支收到新的推送。
+6. 等待目标仓库 Actions 中的 **pages build and deployment** 成功。
+7. 访问 **https://realpixelart.github.io/**，用上传图片、生成、下载验证页面。
 
 这里选择 Deploy from a branch；源码仓库的 Actions 负责构建和跨仓库推送，目标仓库负责从 gh-pages 发布。无需在目标仓库再复制这份源 workflow，也无需在源码仓库开启 Pages。
 
@@ -88,7 +90,18 @@ Bocchi-The-Glock/Real-PixelArt 的 main 分支收到 push
 
 修改 Python 后不用手工更新算法压缩包再上传目标仓库：CI 会重新运行 web/build.py。vendor 已随源仓库提交，CI 校验现有运行时，不依赖每次从 CDN 重新下载。若更新运行时版本，应在开发环境重新执行 `python web/build.py --runtime`，检查清单与许可证后一起提交 vendor。
 
-构建或测试失败时，不执行推送，已部署网站仍保留前一次版本。相同的网页成品不会强行创建空提交。
+构建或测试失败时，不执行推送，已部署网站仍保留前一次版本。发布步骤设置了 `allow_empty_commit: true`：即使网页成品没有变化，也会向目标分支提交并推送一次，便于在首次启用 Pages 或修复设置后重新触发发布。这只增加部署记录，不会重复存储一整份相同的网页文件。
+
+### 已选 gh-pages，但目标 Actions 一直为空
+
+Pages 设置中的 “currently being built from the gh-pages branch” 只说明发布来源，不能证明发布任务已运行。
+
+1. 在目标仓库 **Settings → Actions → General** 检查 Actions 是否启用；如组织策略限制，需在组织设置中允许。
+2. 对比源码 workflow 的运行时间与目标 `gh-pages` 最新提交时间。旧配置在文件不变时跳过提交，重复运行源码 workflow 不会产生新的 push。提交本次 `allow_empty_commit` 修改后，在源码 Actions 点击 **Run workflow**；不要只重跑旧提交的任务。
+3. 保持 Pages 来源为 **Deploy from a branch → gh-pages → / (root)**，查看目标 Actions 的 **All workflows**。
+4. 若目标分支已有新提交，但仍没有部署任务，按 GitHub 官方要求检查推送令牌所属账号是否有目标仓库管理员权限、邮箱是否已验证。若用 fine-grained PAT，还需保留对目标仓库的 Contents 写权限。
+
+不要把源码 workflow 原样复制到目标仓库：它有源码仓库条件限制，也依赖目标仓库不存在的 Python 源码。源码 Action 绿色仍仅表示构建与同步成功；网站上线以目标 Pages 部署成功为准。
 
 ## 本地复现构建
 
@@ -115,6 +128,7 @@ python -m http.server 8765 --bind 127.0.0.1 --directory build/pages
 | Pytest 失败 | 读取失败项日志；先修复再发布，不跳过测试掩盖失败 |
 | Missing / checksum mismatch | 检查 vendor 是否完整提交；排查 Git LFS 指针文件和误改；恢复对应文件后重新构建 |
 | 源仓库 Actions 成功，网站仍 404 | 目标仓库 Pages 是否选 gh-pages / root，目标仓库部署是否成功 |
+| 已选 gh-pages，目标 Actions 仍为空 | 检查目标 Actions/组织策略是否允许；提交 allow_empty_commit 修改后重新 Run workflow；确认目标最新提交确实更新，再检查推送账号的管理员权限和邮箱验证 |
 | 主页能开但一直加载算法 | 浏览器 Network 检查 core.zip、core-manifest.json、vendor/pyodide/*.wasm 和 wheel 是否 200；强制刷新 |
 | 页面仍是旧版 | 确认修改已推送到源仓库 main，查看两个仓库最新部署，再 Ctrl+F5 |
 
