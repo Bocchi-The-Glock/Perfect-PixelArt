@@ -11,15 +11,15 @@ import numpy as np
 import pytest
 from PIL import Image, ImageFilter
 
-from pixelperfect import Config, pixelize, save_result, export_png
-from pixelperfect.features import extract_features, axis_segment_evidence
-from pixelperfect.grid import detect_grid, make_lines
-from pixelperfect.image_io import load_image, to_pil
-from pixelperfect.palette import quantize_cells
-from pixelperfect.sampling import recover_cells
-from pixelperfect import process_colors, palette_catalog
-from pixelperfect.palette import palette_rgb, PALETTE_IDS
-from pixelperfect.color_math import rgb_to_lab, delta_e_2000, nearest
+from realpixelart import Config, pixelize, save_result, export_png
+from realpixelart.features import extract_features, axis_segment_evidence
+from realpixelart.grid import detect_grid, make_lines
+from realpixelart.image_io import load_image, to_pil
+from realpixelart.palette import quantize_cells
+from realpixelart.sampling import recover_cells
+from realpixelart import process_colors, palette_catalog
+from realpixelart.palette import palette_rgb, PALETTE_IDS
+from realpixelart.color_math import rgb_to_lab, delta_e_2000, nearest
 
 
 @pytest.mark.parametrize('shape', [(1, 1), (65, 127), (130, 134)])
@@ -47,7 +47,7 @@ def test_striped_features_match_full_resolution_reference(shape):
 
 @pytest.mark.parametrize('shape', [(1, 1), (65, 127), (130, 134)])
 def test_fft_thumbnail_coordinates_match_full_fft(shape):
-    from pixelperfect.diagnostics import _fft_preview, _preview_axes
+    from realpixelart.diagnostics import _fft_preview, _preview_axes
     gray = np.random.default_rng(18).random(shape)
     half = np.log1p(abs(np.fft.rfft2(gray))).astype(np.float32)
     expected = np.fft.fftshift(np.log1p(abs(np.fft.fft2(gray)))).astype(np.float32)
@@ -239,7 +239,7 @@ def test_unlimited_is_reversible_and_hidden_rgb_cannot_vote(mode):
 
 
 def test_color_postprocessing_never_detects_grid(monkeypatch):
-    import pixelperfect.pipeline as pipeline
+    import realpixelart.pipeline as pipeline
     def fail(*args, **kwargs):
         raise AssertionError('Grid detection must not run during color postprocessing')
     result = pixelize(enlarged(truth_image(rgba=True)))
@@ -351,14 +351,14 @@ def test_comparison_passes_same_white_pixels_to_main_and_real_plus_cli(tmp_path,
             assert image.mode == "RGB"
             np.testing.assert_array_equal(np.array(image), expected)
         assert command[2::2] == ["-i", "-o"]  # No grid or sampling overrides.
-        calls.append("plus")
+        calls.append("realpixelart")
         return real_run(command, **kwargs)
 
     monkeypatch.setattr(comparison.subprocess, "run", inspect_then_run)
-    _, _, plus_image, record = comparison.run_pair(path, tmp_path / "results", main_spy)
-    assert calls == ["main", "plus"]
-    assert record["plus"]["returncode"] == 0
-    assert plus_image is not None
+    _, _, real_image, record = comparison.run_pair(path, tmp_path / "results", main_spy)
+    assert calls == ["main", "realpixelart"]
+    assert record["realpixelart"]["returncode"] == 0
+    assert real_image is not None
     assert record["shared_input"]["sha256_rgb"] == hashlib.sha256(expected.tobytes()).hexdigest()
     assert path.read_bytes() == original_bytes
 
@@ -579,7 +579,7 @@ def test_axis_segment_memory_and_sample_budget_are_independent_of_image_size():
 
 
 def test_native_and_strong_grids_skip_segment_scan(monkeypatch):
-    import pixelperfect.grid as grid
+    import realpixelart.grid as grid
 
     def unexpected(*args):
         raise AssertionError('Native/strong grid should not pay for the auxiliary scan')
@@ -594,7 +594,7 @@ def test_native_and_strong_grids_skip_segment_scan(monkeypatch):
 
 def test_sparse_axis_segment_evidence_abstains():
     from types import SimpleNamespace
-    from pixelperfect.grid import GridCandidate, validate_grid_segments
+    from realpixelart.grid import GridCandidate, validate_grid_segments
     image = np.ones((390, 390, 4), np.float32)
     image[180:210, 195:, :3] = 0
     cuts = np.arange(0., 391, 30)
@@ -683,7 +683,7 @@ def test_edge_estimate_respects_disabled_mode_and_spacing_range(config):
 
 
 def test_rejected_curves_do_not_run_a_second_segment_scan(monkeypatch):
-    from pixelperfect import natural
+    from realpixelart import natural
     def unexpected(*args, **kwargs):
         raise AssertionError('curved contours must not be rescued at another scale')
     monkeypatch.setattr(natural, 'axis_segment_evidence', unexpected)
@@ -1066,9 +1066,9 @@ def test_pipeline_and_export_need_no_scipy_opencv_or_matplotlib(tmp_path,monkeyp
 
 # CLI
 SOURCE = Path(__file__).resolve().parents[1]
-SCRIPT = SOURCE / "pixelperfect.py"
+SCRIPT = SOURCE / "realpixelart.py"
 if not SCRIPT.exists():
-    SCRIPT = SOURCE.parent / "pixelperfect.py"
+    SCRIPT = SOURCE.parent / "realpixelart.py"
 
 
 def invoke(*arguments, cwd):
@@ -1179,11 +1179,11 @@ def test_cli_alpha_policy_and_diagnostic_report(tmp_path):
 
 def test_input_only_writes_named_png_and_opt_in_debug_to_project_output(tmp_path,monkeypatch):
     import json
-    import pixelperfect.__main__ as cli
+    import realpixelart.__main__ as cli
     project=tmp_path/"checkout"
     project.mkdir()
-    (project/"pixelperfect.py").write_text("# checkout marker")
-    monkeypatch.setattr(cli,"__file__",str(project/"src"/"pixelperfect"/"__main__.py"))
+    (project/"realpixelart.py").write_text("# checkout marker")
+    monkeypatch.setattr(cli,"__file__",str(project/"src"/"realpixelart"/"__main__.py"))
     source=tmp_path/"my sprite.jpg"
     make_input(source)
     assert cli.main(["-i",str(source)])==0
@@ -1201,7 +1201,7 @@ def test_input_only_writes_named_png_and_opt_in_debug_to_project_output(tmp_path
 
 
 def test_save_result_default_skips_debug_writer(tmp_path, monkeypatch):
-    import pixelperfect.diagnostics as diagnostics
+    import realpixelart.diagnostics as diagnostics
     def unexpected(*args, **kwargs):
         raise AssertionError("Debug export must be opt-in")
     monkeypatch.setattr(diagnostics, "write_debug", unexpected)
@@ -1326,7 +1326,7 @@ def test_sparse_edge_fallback_is_repeatable_without_inventing_alpha():
 
 @pytest.mark.parametrize("scale", range(1, 17))
 def test_export_all_integer_scales_without_recovery(tmp_path, monkeypatch, scale):
-    import pixelperfect.pipeline as pipeline
+    import realpixelart.pipeline as pipeline
     result = pixelize(enlarged(truth_image(8, 7, rgba=True)))
     native = np.asarray(result.image).copy()
     original_grid = dict(result.grid)
@@ -1538,8 +1538,8 @@ def test_large_scanlines_recover_source_spacing_without_resizing(factor):
 
 
 def test_large_generated_sampler_keeps_center_stroke_between_area_samples():
-    from pixelperfect.grid import GridCandidate
-    from pixelperfect.natural import render_cells
+    from realpixelart.grid import GridCandidate
+    from realpixelart.natural import render_cells
     # 2048^2 enters bounded sampling. The seam at cell center misses all 8x8
     # area positions; the original supported-center sampler still sees it.
     source = np.full((2048, 2048, 4), .55, np.float32)
@@ -1618,8 +1618,8 @@ def test_large_degraded_pixel_art_keeps_existing_recovery(degradation):
 
 def test_ordinary_budget_cannot_coarsen_an_existing_grid():
     from dataclasses import replace
-    from pixelperfect.grid import GridCandidate
-    from pixelperfect.natural import route_image
+    from realpixelart.grid import GridCandidate
+    from realpixelart.natural import route_image
     rgba = load_image(continuous_scene()).rgba
     features = extract_features(rgba)
     grid = GridCandidate(2., 2., 0., 0., np.arange(0, 769, 2), np.arange(0, 577, 2),
@@ -1657,8 +1657,8 @@ def test_actual_pseudo_pixel_art_is_not_rerouted_after_degradation(name, degrada
 
 
 def test_ordinary_sampler_suppresses_smooth_texture_aliasing_but_keeps_thin_line():
-    from pixelperfect.grid import GridCandidate
-    from pixelperfect.natural import render_cells
+    from realpixelart.grid import GridCandidate
+    from realpixelart.natural import render_cells
     # Low-contrast woven fabric plus a continuous dark seam, not random noise.
     y, x = np.mgrid[:64, :64]
     source = np.ones((64, 64, 4), np.float32)

@@ -1,4 +1,4 @@
-# Perfect PixelArt Plus
+# RealPixelArt
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/License-Not%20specified-lightgrey.svg)
@@ -7,21 +7,21 @@
 
 将 AI 生成的“伪像素画”整理为网格规整的低分辨率 PNG，也支持将普通照片、插画像素化。支持透明背景，图片在本机处理。
 
-**[打开网页版](https://perfectpixelart.github.io/)** · **[下载桌面版](https://github.com/Sixiang-Wang/perfect_pixel_art/releases)**
+**[打开网页版](https://realpixelart.github.io/)** · **[下载桌面版](https://github.com/Bocchi-The-Glock/Real-PixelArt/releases)**
 
-![bocchi2 对比：左为 1452×1083 原图，右为 125×93 的 Plus 恢复结果](docs/images/bocchi2-before-after.png)
+![bocchi2 对比：左为 1452×1083 原图，右为 125×93 的 RealPixelArt 恢复结果](docs/images/bocchi2-before-after.png)
 
 左：原图；右：恢复结果。两张图按相同大小展示，右图实际只有 **125×93** 像素。
 
 ## 下载与安装
 
-网页版打开即可使用。桌面版在 [Releases](https://github.com/Sixiang-Wang/perfect_pixel_art/releases) 的 **Assets** 中下载，无需安装 Python。
+网页版打开即可使用。桌面版在 [Releases](https://github.com/Bocchi-The-Glock/Real-PixelArt/releases) 的 **Assets** 中下载，无需安装 Python。
 
 | 系统 | 下载文件 | 打开方式 |
 | --- | --- | --- |
-| Windows 64 位 | `Perfect-PixelArt-Plus-版本号-win-x64.exe` | 双击运行，免安装 |
-| Mac，Apple 芯片（M 系列） | `Perfect-PixelArt-Plus-版本号-mac-arm64.dmg` | 打开后拖入“应用程序” |
-| Mac，Intel 芯片 | `Perfect-PixelArt-Plus-版本号-mac-x64.dmg` | 打开后拖入“应用程序” |
+| Windows 64 位 | `RealPixelArt-版本号-win-x64.exe` | 双击运行，免安装 |
+| Mac，Apple 芯片（M 系列） | `RealPixelArt-版本号-mac-arm64.dmg` | 打开后拖入“应用程序” |
+| Mac，Intel 芯片 | `RealPixelArt-版本号-mac-x64.dmg` | 打开后拖入“应用程序” |
 
 Mac 版需要 macOS 13 或更新版本。桌面版可离线使用；Windows 首次启动需要展开运行文件，后续会复用缓存。
 
@@ -29,14 +29,14 @@ Mac 版需要 macOS 13 或更新版本。桌面版可离线使用；Windows 首�
 
 ### 网页版/应用版
 
-**[打开网页版](https://perfectpixelart.github.io/)** · **[下载桌面版](https://github.com/Sixiang-Wang/perfect_pixel_art/releases)**
+**[打开网页版](https://realpixelart.github.io/)** · **[下载桌面版](https://github.com/Bocchi-The-Glock/Real-PixelArt/releases)**
 
 1. **放入图片**：点击“上传图片”或原图窗口，也可以直接拖入文件。
 2. **点击“生成”**：先使用默认设置，程序会自动判断格子大小并恢复像素。
 3. **按需调整颜色**：默认不限制颜色；也可限制数量，或选择色库。颜色调整在恢复之后进行，不会重新划分网格。
 4. **下载 PNG**：默认导出倍数设为 **1**，保存原生低分辨率图片；设为 **2–16**，使用最近邻放大，无需重新生成。
 
-![lastTour 使用示例：左为 1536×1024 原图，右为 331×219 的 Plus 结果](docs/images/lastTour-tutorial.png)
+![lastTour 使用示例：左为 1536×1024 原图，右为 331×219 的 RealPixelArt 结果](docs/images/lastTour-tutorial.png)
 
 ### 使用 Python 命令行
 
@@ -44,14 +44,14 @@ Mac 版需要 macOS 13 或更新版本。桌面版可离线使用；Windows 首�
 
 ```bash
 python -m pip install -e .
-python pixelperfect.py -i input/lastTour.png
+python realpixelart.py -i input/lastTour.png
 ```
 
 结果保存为 `output/lastTour.png`。默认只生成结果图。
 
 
 ```bash
-python pixelperfect.py -i input/lastTour.png --colors 32 --scale 4 --debug
+python realpixelart.py -i input/lastTour.png --colors 32 --scale 4 --debug
 ```
 
 上例限制为最多 32 色，并将结果放大 4 倍。使用 `--help` 查看全部参数。算法运行依赖只有 NumPy 和 Pillow。
@@ -77,16 +77,16 @@ python pixelperfect.py -i input/lastTour.png --colors 32 --scale 4 --debug
 
 感谢 [theamusing/perfectPixel](https://github.com/theamusing/perfectPixel)。它用 FFT 估计格距、用边缘校正网格再取色的思路，启发了本项目。
 
-Plus 主要围绕这些环节做了改进：
+RealPixelArt 主要围绕这些环节做了改进：
 
 - **格距选择**：比较多个尺度与起点，加入边缘间距和连续边段验证，减少选错倍频、过度降采样的情况。
 - **细节与透明度**：增加原生像素保护、中心优先的异常点检查，以及 alpha 感知的边缘与取色处理。
 - **颜色后处理**：将限色、色库匹配与网格恢复分开，调整颜色时保留已恢复的网格。
 
-![lastTour 三图对比：左为原图，中为 perfectPixel，右为 Perfect PixelArt Plus；下排为人物局部](docs/images/lastTour-comparison.png)
+![lastTour 三图对比：左为原图，中为 perfectPixel，右为 RealPixelArt；下排为人物局部](docs/images/lastTour-comparison.png)
 
-从左到右为 **原图（1536×1024）→ perfectPixel（168×111）→ Plus（331×219）**，下排展示相同相对区域的人物细节。图片统一白底、按相同大小显示，低分辨率结果采用最近邻缩放。
+从左到右为 **原图（1536×1024）→ perfectPixel（168×111）→ RealPixelArt（331×219）**，下排展示相同相对区域的人物细节。图片统一白底、按相同大小显示，低分辨率结果采用最近邻缩放。
 
-在这个样例中，Plus 保留了更多眼睛、头发和帽沿的细节，perfectPixel 的结果更粗。这也与两者选出的分辨率不同有关：此处使用已有的三张结果图，仅作视觉比较，不代表 Plus 在所有图片上都更好。
+在这个样例中，RealPixelArt 保留了更多眼睛、头发和帽沿的细节，perfectPixel 的结果更粗。这也与两者选出的分辨率不同有关：此处使用已有的三张结果图，仅作视觉比较，不代表 RealPixelArt 在所有图片上都更好。
 
 更多实测见 [评估记录](EVALUATION.md)

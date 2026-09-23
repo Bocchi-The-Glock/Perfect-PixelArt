@@ -1,11 +1,11 @@
 {
-  "name": "perfect-pixelart-plus-desktop",
+  "name": "realpixelart-desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "Offline desktop edition of Perfect PixelArt Plus",
+  "description": "Offline desktop edition of RealPixelArt",
   "author": "Bocchi-The-Glock",
   "license": "UNLICENSED",
-  "homepage": "https://github.com/Bocchi-The-Glock/Perfect-PixelArt",
+  "homepage": "https://github.com/Bocchi-The-Glock/Real-PixelArt",
   "main": "main.cjs",
   "engines": { "node": ">=22.12.0" },
   "scripts": {
@@ -29,14 +29,14 @@
     "playwright": "1.63.0"
   },
   "build": {
-    "appId": "io.github.perfectpixelart.plus",
-    "productName": "Perfect PixelArt Plus",
+    "appId": "io.github.realpixelart",
+    "productName": "RealPixelArt",
     "asar": true,
     "npmRebuild": false,
     "directories": { "output": "dist", "buildResources": "assets" },
     "files": ["main.cjs", "protocol.cjs", "package.json", "assets/app.png"],
     "extraResources": [{ "from": "../build/pages", "to": "web" }],
-    "artifactName": "Perfect-PixelArt-Plus-${version}-${os}-${arch}.${ext}",
+    "artifactName": "RealPixelArt-${version}-${os}-${arch}.${ext}",
     "artifactBuildStarted": "scripts/runtime-manifest.cjs",
     "win": { "target": ["zip", "nsis"], "icon": "assets/app.ico" },
     "nsis": {

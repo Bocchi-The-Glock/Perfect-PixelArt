@@ -1,4 +1,4 @@
-"""Browser adapter. All image decisions remain inside pixelperfect, unchanged."""
+"""Browser adapter. All image decisions remain inside realpixelart, unchanged."""
 import json
 import platform
 from pathlib import Path
@@ -6,7 +6,7 @@ import zipfile
 import numpy as np
 from PIL import __version__ as pillow_version
 from PIL import Image
-from pixelperfect import Config, pixelize, save_result, export_png, process_colors
+from realpixelart import Config, pixelize, save_result, export_png, process_colors
 
 
 def process(input_path, request_json, output_directory):

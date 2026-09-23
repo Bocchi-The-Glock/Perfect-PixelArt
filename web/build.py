@@ -18,11 +18,11 @@ CDN = f"https://cdn.jsdelivr.net/pyodide/v{VERSION}/full/"
 def bundle():
     sys.path.insert(0, str(ROOT / "src"))
     from dataclasses import asdict
-    from pixelperfect import Config, __version__
-    from pixelperfect.palette import palette_catalog
-    entries = {"pixelperfect/" + p.name: p.read_bytes()
-               for p in sorted((ROOT / "src/pixelperfect").glob("*.py"))}
-    entries["pixelperfect/palettes.json"] = (ROOT / "src/pixelperfect/palettes.json").read_bytes()
+    from realpixelart import Config, __version__
+    from realpixelart.palette import palette_catalog
+    entries = {"realpixelart/" + p.name: p.read_bytes()
+               for p in sorted((ROOT / "src/realpixelart").glob("*.py"))}
+    entries["realpixelart/palettes.json"] = (ROOT / "src/realpixelart/palettes.json").read_bytes()
     entries["web_bridge.py"] = (WEB / "bridge.py").read_bytes()
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -77,7 +77,7 @@ def main():
         for name, expected in (("core.zip", data), ("core-manifest.json", manifest)):
             if not (WEB / name).exists() or (WEB / name).read_bytes() != expected:
                 raise SystemExit(f"Stale {name}; run python web/build.py")
-        print("Web core matches src/pixelperfect byte-for-byte.")
+        print("Web core matches src/realpixelart byte-for-byte.")
         return
     (WEB / "core.zip").write_bytes(data)
     (WEB / "core-manifest.json").write_bytes(manifest)

@@ -33,7 +33,7 @@ module.exports = async event => {
   const version = require('../package.json').version;
   if (!/^[\w.-]+$/.test(version)) throw new Error('Unsafe version');
   const contentHash = createHash('sha256').update(JSON.stringify(files)).digest('hex');
-  const id = `ppap-${version}-x64-${contentHash.slice(0, 20)}`;
+  const id = `realpixelart-${version}-x64-${contentHash.slice(0, 20)}`;
   const lines = [`!define CACHE_ID "${id}"`, '!macro CheckRuntime'];
   for (const dir of directories) lines.push(`  !insertmacro CheckDirectory "${dir.replaceAll('/', '\\')}"`);
   for (const file of files) lines.push(`  !insertmacro CheckFile "${file.path.replaceAll('/', '\\')}" "${file.sha256}"`);

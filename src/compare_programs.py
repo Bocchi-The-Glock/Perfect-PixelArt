@@ -36,12 +36,12 @@ def white_input(path):
 
 def run_pair(path, destination, main_function, debug_dir=None):
     name = path.stem + ".png"
-    main_path, plus_path = destination/"main"/name, destination/"plus"/name
+    main_path, real_path = destination/"main"/name, destination/"realpixelart"/name
     shared_path = destination/"input_white"/name
-    if path.resolve() in (main_path.resolve(), plus_path.resolve(), shared_path.resolve()):
+    if path.resolve() in (main_path.resolve(), real_path.resolve(), shared_path.resolve()):
         raise ValueError("Comparison output must not overwrite its input")
     main_path.parent.mkdir(parents=True, exist_ok=True)
-    plus_path.parent.mkdir(parents=True, exist_ok=True)
+    real_path.parent.mkdir(parents=True, exist_ok=True)
     shared_path.parent.mkdir(parents=True, exist_ok=True)
     prepared = white_input(path)
     prepared.save(shared_path)
@@ -51,11 +51,11 @@ def run_pair(path, destination, main_function, debug_dir=None):
                                "mode": "RGB", "size": list(prepared.size),
                                "sha256_rgb": hashlib.sha256(rgb.tobytes()).hexdigest()},
               "main": {"backend": main_function.__module__},
-              "plus": {"entry": str(ROOT/"pixelperfect.py")}}
-    main_image = plus_image = None
+              "realpixelart": {"entry": str(ROOT/"realpixelart.py")}}
+    main_image = real_image = None
     # Remove only this runner's previous result files so failures cannot reuse them.
     main_path.unlink(missing_ok=True)
-    plus_path.unlink(missing_ok=True)
+    real_path.unlink(missing_ok=True)
     stream = io.StringIO()
     try:
         with contextlib.redirect_stdout(stream):
@@ -68,27 +68,27 @@ def run_pair(path, destination, main_function, debug_dir=None):
         record["main"].update(status="error", error=str(error))
     record["main"]["log"] = stream.getvalue()
 
-    command = [sys.executable, str(ROOT/"pixelperfect.py"), "-i", str(shared_path), "-o", str(plus_path)]
+    command = [sys.executable, str(ROOT/"realpixelart.py"), "-i", str(shared_path), "-o", str(real_path)]
     if debug_dir is not None:
         command.extend(["--debug", "--debug-dir", str(debug_dir)])
     # Real CLI invocation: no pixel-size, target-size, sampling, or grid overrides.
     completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True,
                                encoding="utf-8", errors="replace")
-    record["plus"].update(command=command, stdout=completed.stdout, stderr=completed.stderr,
+    record["realpixelart"].update(command=command, stdout=completed.stdout, stderr=completed.stderr,
                           returncode=completed.returncode)
     if completed.returncode == 0:
-        with Image.open(plus_path) as image:
-            plus_image = image.copy()
-        record["plus"].update(status="fallback" if "No reliable grid evidence" in completed.stderr else "ok",
-                              size=list(plus_image.size), output=str(plus_path))
+        with Image.open(real_path) as image:
+            real_image = image.copy()
+        record["realpixelart"].update(status="fallback" if "No reliable grid evidence" in completed.stderr else "ok",
+                              size=list(real_image.size), output=str(real_path))
         if debug_dir is not None:
             info = json.loads((Path(debug_dir)/"info.json").read_text(encoding="utf-8"))
-            record["plus"].update(grid=info["grid"], debug_dir=str(debug_dir))
+            record["realpixelart"].update(grid=info["grid"], debug_dir=str(debug_dir))
     else:
-        record["plus"].update(status="error")
+        record["realpixelart"].update(status="error")
     print(path.name, "main:", record["main"].get("size", "error"),
-          "plus:", record["plus"].get("size", "error"), flush=True)
-    return path.name, main_image, plus_image, record
+          "realpixelart:", record["realpixelart"].get("size", "error"), flush=True)
+    return path.name, main_image, real_image, record
 
 
 def display(image, zoom):
@@ -111,7 +111,7 @@ def write_comparison(rows, path, fixed_zoom=None):
     draw = ImageDraw.Draw(canvas)
     top = 0
     for (name,left,right,record),(zoom,_,height) in zip(rows,layouts):
-        for col,(label,image) in enumerate((("perfectPixel-main",left),("PixelPerfect Plus",right))):
+        for col,(label,image) in enumerate((("perfectPixel-main",left),("RealPixelArt",right))):
             x = col*column_width
             draw.text((x+12,top+8), name+" | "+label, fill="black")
             if image is None:
@@ -146,19 +146,19 @@ def run(input_path=None, output_dir=None, debug=False):
     for row in rows:
         write_comparison([row],output_dir/"comparison_native"/(Path(row[0]).stem+"_8x.png"),fixed_zoom=8)
     report = {"protocol": "Same EXIF-corrected source composited onto pure white using alpha, "
-                          "then passed as identical RGB pixels to main public API and Plus CLI with original defaults. "
+                          "then passed as identical RGB pixels to main public API and RealPixelArt CLI with original defaults. "
                           "Each program detects its own grid. No pattern generation, external grid selection, "
                           "resizing of inputs, synthetic scoring, or output halo removal. Display background is white.",
-              "columns": ["perfectPixel-main","PixelPerfect Plus"],
+              "columns": ["perfectPixel-main","RealPixelArt"],
               "display_zoom_per_row": zooms, "cases": [row[3] for row in rows]}
     (output_dir/"comparison.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
-    return int(any(row[3][label]["status"]=="error" for row in rows for label in ("main","plus")))
+    return int(any(row[3][label]["status"]=="error" for row in rows for label in ("main","realpixelart")))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-i","--input",type=Path,help="one real image; default: images in input/")
     parser.add_argument("--output-dir",type=Path)
-    parser.add_argument("--debug", action="store_true", help="save Plus diagnostics under output/debug/comparison/")
+    parser.add_argument("--debug", action="store_true", help="save RealPixelArt diagnostics under output/debug/comparison/")
     args=parser.parse_args()
     raise SystemExit(run(args.input,args.output_dir,args.debug))

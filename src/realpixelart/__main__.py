@@ -45,7 +45,7 @@ def main(argv=None):
                         min_pixel_size=args.min_pixel_size, max_pixel_size=args.max_pixel_size,
                         square=args.square)
         checkout = Path(__file__).resolve().parents[2]
-        root = checkout if (checkout / "pixelperfect.py").is_file() else Path.cwd()
+        root = checkout if (checkout / "realpixelart.py").is_file() else Path.cwd()
         if args.output is None:
             args.output = root / "output" / (args.input.stem + ".png")
         if args.output.suffix.lower() != ".png":
@@ -61,7 +61,7 @@ def main(argv=None):
               f"alpha={result.diagnostics['structure']['alpha_mode']}; "
               f"time={result.timings['total_with_export']:.3f}s; output={args.output}")
         for message in result.diagnostics["warnings"]:
-            print(f"pixelperfect: {message}", file=sys.stderr)
+            print(f"realpixelart: {message}", file=sys.stderr)
         color_info = result.diagnostics["color_processing"]
         if color_info["applied"]:
             print(f"colors={color_info['output_colors']}; palette={args.palette or 'adaptive'}; "
@@ -73,10 +73,10 @@ def main(argv=None):
                 print(f"  {name}: {seconds:.4f} s", file=sys.stderr)
         return 0
     except MemoryError:
-        print("pixelperfect: error: insufficient memory for this image; use a machine with more available memory.", file=sys.stderr)
+        print("realpixelart: error: insufficient memory for this image; use a machine with more available memory.", file=sys.stderr)
         return 2
     except (ValueError, TypeError, OSError) as exc:
-        print(f"pixelperfect: error: {exc}", file=sys.stderr)
+        print(f"realpixelart: error: {exc}", file=sys.stderr)
         return 2
 
 

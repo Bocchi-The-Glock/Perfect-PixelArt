@@ -103,16 +103,16 @@ Function .onInit
   SetShellVarContext current
   InitPluginsDir
   ${StdUtils.TestParameter} $Quiet "smoke-test"
-  StrCpy $CacheRoot "$LOCALAPPDATA\PerfectPixelArtPlus\Runtime"
+  StrCpy $CacheRoot "$LOCALAPPDATA\RealPixelArt\Runtime"
   StrCpy $CacheDir "$CacheRoot\${CACHE_ID}"
   ; Do not follow a redirected application/cache root during extraction/deletion.
   StrCpy $INSTDIR "$LOCALAPPDATA"
-  !insertmacro CheckDirectory "PerfectPixelArtPlus"
-  !insertmacro CheckDirectory "PerfectPixelArtPlus\Runtime"
+  !insertmacro CheckDirectory "RealPixelArt"
+  !insertmacro CheckDirectory "RealPixelArt\Runtime"
   Goto root_ok
   invalid:
     ; Missing directories are normal on the first run; reparse points are not.
-    System::Call 'kernel32::GetFileAttributesW(w "$LOCALAPPDATA\PerfectPixelArtPlus") i.r0'
+    System::Call 'kernel32::GetFileAttributesW(w "$LOCALAPPDATA\RealPixelArt") i.r0'
     ${If} $0 != -1
       IntOp $0 $0 & 0x400
       IntCmp $0 0 +2
@@ -130,7 +130,7 @@ Function .onInit
   IfErrors unsafe_root
   ; Include the user root in the lock name: separate Windows users do not block.
   ${StdUtils.HashText} $0 "SHA2-256" "$CacheRoot"
-  System::Call 'kernel32::CreateMutexW(p 0, i 0, w "Local\PerfectPixelArtPlus.Runtime.$0") p.s'
+  System::Call 'kernel32::CreateMutexW(p 0, i 0, w "Local\RealPixelArt.Runtime.$0") p.s'
   Pop $Mutex
   StrCmp $Mutex 0 unsafe_root
   Return
@@ -187,7 +187,7 @@ Section
     Call VerifyRuntime
     StrCmp $Valid 1 +2
       Goto failed
-    WriteINIStr "$INSTDIR\.runtime-cache.ini" "cache" "owner" "PerfectPixelArtPlus.Runtime.v1"
+    WriteINIStr "$INSTDIR\.runtime-cache.ini" "cache" "owner" "RealPixelArt.Runtime.v1"
     WriteINIStr "$INSTDIR\.runtime-cache.ini" "cache" "id" "${CACHE_ID}"
   ${EndIf}
   ; Shared read leases permit repeated double-clicks. Cleanup/repair requires
@@ -217,13 +217,13 @@ Section
   FileClose $0
   StrCmp $1 "${CACHE_ID}" 0 done
   Call LockCache
-  FindFirst $FindHandle $Candidate "$CacheRoot\ppap-*-x64-*"
+  FindFirst $FindHandle $Candidate "$CacheRoot\realpixelart-*-x64-*"
   cleanup_loop:
     StrCmp $Candidate "" cleanup_done
     StrCmp $Candidate "${CACHE_ID}" cleanup_next
     StrCpy $INSTDIR "$CacheRoot\$Candidate"
     ReadINIStr $0 "$INSTDIR\.runtime-cache.ini" "cache" "owner"
-    StrCmp $0 "PerfectPixelArtPlus.Runtime.v1" 0 cleanup_next
+    StrCmp $0 "RealPixelArt.Runtime.v1" 0 cleanup_next
     ReadINIStr $0 "$INSTDIR\.runtime-cache.ini" "cache" "id"
     StrCmp $0 $Candidate 0 cleanup_next
     System::Call 'kernel32::CreateFileW(w "$INSTDIR\.in-use", i 0xC0000000, i 0, p 0, i 3, i 0x80, p 0) p.s'
@@ -249,7 +249,7 @@ Section
     System::Call 'kernel32::CloseHandle(p $Lease)'
     Goto failed
   busy:
-    MessageBox MB_OK|MB_ICONEXCLAMATION "Close Perfect PixelArt Plus before repairing its cache. / 请先关闭正在运行的程序，再重新打开以修复缓存。"
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Close RealPixelArt before repairing its cache. / 请先关闭正在运行的程序，再重新打开以修复缓存。"
     SetErrorLevel 1
     Quit
   failed:

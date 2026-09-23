@@ -10,10 +10,10 @@ const { chromium } = require('playwright');
 const desktop = path.resolve(__dirname, '..');
 const manifest = require('../dist/runtime-cache.json');
 const version = require('../package.json').version;
-const executable = path.join(desktop, `dist/Perfect-PixelArt-Plus-${version}-win-x64.exe`);
-const root = path.join(process.env.LOCALAPPDATA, 'PerfectPixelArtPlus/Runtime');
+const executable = path.join(desktop, `dist/RealPixelArt-${version}-win-x64.exe`);
+const root = path.join(process.env.LOCALAPPDATA, 'RealPixelArt/Runtime');
 const cache = path.join(root, manifest.id);
-assert.match(manifest.id, /^ppap-[\w.-]+-x64-[a-f0-9]{20}$/);
+assert.match(manifest.id, /^realpixelart-[\w.-]+-x64-[a-f0-9]{20}$/);
 assert.equal(path.dirname(cache), path.resolve(root));
 const out = path.join(desktop, 'test-results', 'runtime-cache-' + Date.now());
 fs.mkdirSync(out, { recursive: true });
@@ -25,7 +25,7 @@ const report = { environment: { os: os.release(), cpu: os.cpus()[0].model, node:
 
 function safeRemove(target) {
   assert.equal(path.dirname(path.resolve(target)), path.resolve(root));
-  assert.ok(path.basename(target).startsWith('ppap-'));
+  assert.ok(path.basename(target).startsWith('realpixelart-'));
   // Node rm removes symlinks themselves; it does not follow directory junctions.
   fs.rmSync(target, { recursive: true, force: true });
 }
@@ -85,15 +85,15 @@ async function launch(name, check) {
   safeRemove(cache);
   await launch('first extraction');
   const stamp = fs.statSync(path.join(cache, '.runtime-cache.ini')).mtimeMs;
-  const appStamp = fs.statSync(path.join(cache, 'Perfect PixelArt Plus.exe')).mtimeMs;
+  const appStamp = fs.statSync(path.join(cache, 'RealPixelArt.exe')).mtimeMs;
   await launch('cache reused', async () => {
     assert.equal(fs.statSync(path.join(cache, '.runtime-cache.ini')).mtimeMs, stamp);
-    assert.equal(fs.statSync(path.join(cache, 'Perfect PixelArt Plus.exe')).mtimeMs, appStamp);
+    assert.equal(fs.statSync(path.join(cache, 'RealPixelArt.exe')).mtimeMs, appStamp);
     // A second double-click must focus the original app and exit, never wait for
     // its lifetime or remove files used by the original running process.
     const second = start();
     await exited(second);
-    assert.ok(fs.existsSync(path.join(cache, 'Perfect PixelArt Plus.exe')));
+    assert.ok(fs.existsSync(path.join(cache, 'RealPixelArt.exe')));
   });
   const file = path.join(cache, 'resources/web/index.html');
   const expected = manifest.files.find(f => f.path === 'resources/web/index.html').sha256;
@@ -105,18 +105,18 @@ async function launch(name, check) {
   assert.ok(fs.existsSync(path.join(cache, 'resources/web/core.zip')));
 
   // Distinguish owned obsolete caches from unrelated files before deleting.
-  const old = path.join(root, 'ppap-0.0.0-x64-' + '0'.repeat(20));
-  const unknown = path.join(root, 'ppap-test-unowned-x64-' + '0'.repeat(20));
-  const linked = path.join(root, 'ppap-test-junction-x64-' + '0'.repeat(20));
-  const held = path.join(root, 'ppap-test-in-use-x64-' + '0'.repeat(20));
+  const old = path.join(root, 'realpixelart-0.0.0-x64-' + '0'.repeat(20));
+  const unknown = path.join(root, 'realpixelart-test-unowned-x64-' + '0'.repeat(20));
+  const linked = path.join(root, 'realpixelart-test-junction-x64-' + '0'.repeat(20));
+  const held = path.join(root, 'realpixelart-test-in-use-x64-' + '0'.repeat(20));
   assert.ok([old, unknown, linked, held].every(p => !fs.existsSync(p)), 'Fixture names already exist');
   fs.mkdirSync(old); fs.mkdirSync(unknown);
-  fs.writeFileSync(path.join(old, '.runtime-cache.ini'), '[cache]\r\nowner=PerfectPixelArtPlus.Runtime.v1\r\nid=' + path.basename(old) + '\r\n');
+  fs.writeFileSync(path.join(old, '.runtime-cache.ini'), '[cache]\r\nowner=RealPixelArt.Runtime.v1\r\nid=' + path.basename(old) + '\r\n');
   fs.writeFileSync(path.join(old, '.in-use'), '');
   fs.writeFileSync(path.join(unknown, 'keep.txt'), 'unrelated');
   for (const dir of [linked, held]) {
     fs.mkdirSync(dir);
-    fs.writeFileSync(path.join(dir, '.runtime-cache.ini'), '[cache]\r\nowner=PerfectPixelArtPlus.Runtime.v1\r\nid=' + path.basename(dir) + '\r\n');
+    fs.writeFileSync(path.join(dir, '.runtime-cache.ini'), '[cache]\r\nowner=RealPixelArt.Runtime.v1\r\nid=' + path.basename(dir) + '\r\n');
     fs.writeFileSync(path.join(dir, '.in-use'), '');
   }
   const protectedFolder = path.join(out, 'unrelated-images');

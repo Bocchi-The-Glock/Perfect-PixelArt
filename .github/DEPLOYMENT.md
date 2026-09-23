@@ -1,37 +1,53 @@
-# 自动发布到 PerfectPixelArt.github.io
+# 自动发布到 RealPixelArt.github.io
+
+## 切换到新网站
+
+- 源码仓库：**https://github.com/Bocchi-The-Glock/Real-PixelArt**。
+- 网站仓库：**https://github.com/RealPixelArt/RealPixelArt.github.io**，仓库名末尾没有分号。
+- 网站访问地址：**https://realpixelart.github.io/**。
+
+先创建或确认网站仓库为公开仓库。沿用 `ORG_PAGES_TOKEN` 这个 Secret 名称，但令牌必须授权给新的 **RealPixelArt/RealPixelArt.github.io**；旧组织的 fine-grained token 不会自动获得新组织的权限。按下面步骤创建新令牌，并在源码仓库更新 Secret。
+
+提交本次更名和 workflow 修改后，运行 **Deploy RealPixelArt website**；第一次成功推送会建立目标仓库的 `gh-pages` 分支，再到目标仓库 Pages 设置中选择该分支的根目录。源码仓库改名不会自动迁移旧网站仓库、Pages 设置或部署令牌。
+
+本地远程地址应为：
+
+```powershell
+git remote set-url origin https://github.com/Bocchi-The-Glock/Real-PixelArt.git
+```
 
 ## 两个仓库的分工
 
 ```text
-Bocchi-The-Glock/Perfect-PixelArt 的 main 分支收到 push
+Bocchi-The-Glock/Real-PixelArt 的 main 分支收到 push
   → 安装 Python 3.12 和固定版本依赖
-  → 运行 src/tests/test_pixelperfect.py
+  → 运行 src/tests/test_realpixelart.py
   → web/build.py 同步最新 Python 核心
   → 校验算法包、Pyodide、NumPy / Pillow 及许可证
   → 将 build/pages 的内容推送到目标仓库 gh-pages 分支
-  → 目标仓库的 GitHub Pages 发布 https://perfectpixelart.github.io/
+  → 目标仓库的 GitHub Pages 发布 https://realpixelart.github.io/
 ```
 
-源仓库保留完整项目：`.github/`、`src/`、`input/`、`web/`、`pixelperfect.py`、`pyproject.toml` 等。不要只上传 web；测试需要 input 中的 6 张图片，构建需要 input/lastTour.png 和 src/pixelperfect。
+源仓库保留完整项目：`.github/`、`src/`、`input/`、`web/`、`realpixelart.py`、`pyproject.toml` 等。不要只上传 web；测试需要 input 中的 6 张图片，构建需要 input/lastTour.png 和 src/realpixelart。
 
-目标仓库 `PerfectPixelArt/PerfectPixelArt.github.io` 接收网页成品。发布目录根部就是 index.html，同时包含前端 JS/CSS、core.zip、core-manifest.json、assets、vendor 和 .nojekyll。不会把开发脚本、测试或 input/output 文件夹复制到网站。
+目标仓库 `RealPixelArt/RealPixelArt.github.io` 接收网页成品。发布目录根部就是 index.html，同时包含前端 JS/CSS、core.zip、core-manifest.json、assets、vendor 和 .nojekyll。不会把开发脚本、测试或 input/output 文件夹复制到网站。
 
 ## 一、创建跨仓库令牌
 
-使用对目标仓库有写权限、且属于 PerfectPixelArt 组织的账号：
+使用对目标仓库有写权限、且属于 RealPixelArt 组织的账号：
 
 1. GitHub 个人头像 → **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**。
-2. 名称可填 `Perfect-PixelArt website deploy`；设置有效期，到期前更新 Secret。
-3. **Resource owner：PerfectPixelArt**。不要选源码仓库的个人用户名。
-4. **Repository access → Only select repositories**：仅选择 `PerfectPixelArt.github.io`。
+2. 名称可填 `Real-PixelArt website deploy`；设置有效期，到期前更新 Secret。
+3. **Resource owner：RealPixelArt**。不要选源码仓库的个人用户名。
+4. **Repository access → Only select repositories**：仅选择 `RealPixelArt.github.io`。
 5. **Repository permissions → Contents：Read and write**；Metadata 的只读权限自动带上。
 6. 生成令牌。如果显示 Pending，先让组织管理员批准。此方案只推送静态文件，不需要给令牌增加 Workflows、Pages 或组织管理权限。
 
-如果 Resource owner 列表里没有 PerfectPixelArt，请先确认当前账号是该组织成员，以及组织允许 fine-grained tokens。若 PerfectPixelArt 实际是另一个个人账号，需要由该账号创建可写目标仓库的令牌。
+如果 Resource owner 列表里没有 RealPixelArt，请先确认当前账号是该组织成员，以及组织允许 fine-grained tokens。若 RealPixelArt 实际是另一个个人账号，需要由该账号创建可写目标仓库的令牌。
 
 ## 二、Secret 放到源码仓库
 
-打开 [源码仓库的 Actions secrets](https://github.com/Bocchi-The-Glock/Perfect-PixelArt/settings/secrets/actions)：
+打开 [源码仓库的 Actions secrets](https://github.com/Bocchi-The-Glock/Real-PixelArt/settings/secrets/actions)：
 
 **Settings → Secrets and variables → Actions → New repository secret**
 
@@ -46,21 +62,21 @@ Bocchi-The-Glock/Perfect-PixelArt 的 main 分支收到 push
 
 将 `.github/workflows/deploy-org-pages.yml`、`.github/requirements-ci.txt`、`.github/scripts/prepare_pages.py` 和本说明提交到**源码仓库的 main 分支**。已有网页或 Python 修改也按你的发布需要提交。
 
-注意 workflow 必须位于 GitHub 仓库根部的 `.github/workflows/`；不能外面再套一层 perfect_pixel_plus 文件夹。
+注意 workflow 必须位于 GitHub 仓库根部的 `.github/workflows/`；不能外面再套一层 real_pixel_art 文件夹。
 
-进入 [源码仓库 Actions](https://github.com/Bocchi-The-Glock/Perfect-PixelArt/actions)，等待 **Deploy organization website** 成功。也可点进该 workflow → **Run workflow → Branch: main → Run workflow** 手动运行。
+进入 [源码仓库 Actions](https://github.com/Bocchi-The-Glock/Real-PixelArt/actions)，等待 **Deploy RealPixelArt website** 成功。也可点进该 workflow → **Run workflow → Branch: main → Run workflow** 手动运行。
 
 第一次成功后，目标仓库会出现 **gh-pages** 分支。不用预先创建；现有 main 分支不会被这个 workflow 改写。gh-pages 专门保存生成的网页：每次同步会移除旧的成品文件，保留提交历史，因此不要手动在 gh-pages 放其他资料。
 
 ## 四、在目标仓库开启 GitHub Pages（只需一次）
 
-打开 [目标仓库 Pages 设置](https://github.com/PerfectPixelArt/PerfectPixelArt.github.io/settings/pages)：
+打开 [目标仓库 Pages 设置](https://github.com/RealPixelArt/RealPixelArt.github.io/settings/pages)：
 
 1. **Settings → Pages → Build and deployment**。
 2. **Source：Deploy from a branch**。
 3. **Branch：gh-pages**，文件夹选 **/ (root)**，点 **Save**。
 4. 等待目标仓库 Actions 中的 **pages build and deployment** 成功。
-5. 访问 **https://perfectpixelart.github.io/**，用上传图片、生成、下载验证页面。
+5. 访问 **https://realpixelart.github.io/**，用上传图片、生成、下载验证页面。
 
 这里选择 Deploy from a branch；源码仓库的 Actions 负责构建和跨仓库推送，目标仓库负责从 gh-pages 发布。无需在目标仓库再复制这份源 workflow，也无需在源码仓库开启 Pages。
 
@@ -80,7 +96,7 @@ Bocchi-The-Glock/Perfect-PixelArt 的 main 分支收到 push
 
 ```powershell
 python -m pip install -r .github/requirements-ci.txt
-python -m pytest src/tests/test_pixelperfect.py -q
+python -m pytest src/tests/test_realpixelart.py -q
 python web/build.py
 python web/build.py --check
 python .github/scripts/prepare_pages.py

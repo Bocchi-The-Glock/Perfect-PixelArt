@@ -7,13 +7,13 @@ const { ORIGIN, assetHandler } = require('./protocol.cjs');
 protocol.registerSchemesAsPrivileged([{ scheme: 'pixelart', privileges: {
   standard: true, secure: true, supportFetchAPI: true, corsEnabled: true,
 } }]);
-app.setName('Perfect PixelArt Plus');
-app.setAppUserModelId('io.github.perfectpixelart.plus');
+app.setName('RealPixelArt');
+app.setAppUserModelId('io.github.realpixelart');
 const userData = app.commandLine.getSwitchValue('user-data-dir');
 if (userData) app.setPath('userData', path.resolve(userData));
 const smokeTest = app.commandLine.hasSwitch('smoke-test');
 let mainWindow;
-const REPOSITORY = 'https://github.com/Bocchi-The-Glock/Perfect-PixelArt';
+const REPOSITORY = 'https://github.com/Bocchi-The-Glock/Real-PixelArt';
 function openRepository(address) {
   // Only this explicit repository link may leave the offline application.
   if (address === REPOSITORY) shell.openExternal(REPOSITORY).catch(error => console.error('Cannot open repository:', error));
@@ -22,7 +22,7 @@ function openRepository(address) {
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440, height: 1000, minWidth: 800, minHeight: 600,
-    title: 'Perfect PixelArt Plus', show: false, backgroundColor: '#f6f7f5',
+    title: 'RealPixelArt', show: false, backgroundColor: '#f6f7f5',
     icon: path.join(__dirname, 'assets/app.png'),
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true,
       webSecurity: true, spellcheck: false, backgroundThrottling: false },
@@ -78,13 +78,13 @@ if (!app.requestSingleInstanceLock()) {
     const runtime = process.env.PIXELART_RUNTIME_DIR;
     const build = process.env.PIXELART_RUNTIME_ID;
     if (app.isPackaged && runtime === path.dirname(process.execPath)
-        && /^ppap-[\w.-]+-x64-[a-f0-9]{20}$/.test(build || '') && path.basename(runtime) === build) {
+        && /^realpixelart-[\w.-]+-x64-[a-f0-9]{20}$/.test(build || '') && path.basename(runtime) === build) {
       await require('node:fs/promises').writeFile(path.join(runtime, '.app-started'), build).catch(console.error);
     }
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   }).catch(error => {
     console.error(error);
-    if (!smokeTest) dialog.showErrorBox('Perfect PixelArt Plus', String(error.message || error));
+    if (!smokeTest) dialog.showErrorBox('RealPixelArt', String(error.message || error));
     app.exit(1);
   });
   app.on('window-all-closed', () => { if (process.platform !== 'darwin' || smokeTest) app.quit(); });

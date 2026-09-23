@@ -1,4 +1,4 @@
-# Perfect PixelArt Plus Web
+# RealPixelArt Web
 
 纯前端像素画恢复与普通图片像素化工具。页面和算法都在浏览器内执行，图片不会上传；没有后端、数据库、远程推理或图像处理 API。所有运行资源均包含在这个目录中，可独立部署到普通静态托管。
 
@@ -6,7 +6,7 @@
 
 ## 打开网页
 
-GitHub 自动部署配置及操作步骤见 [跨仓库 GitHub Pages 部署说明](../.github/DEPLOYMENT.md)。向源码仓库 main 推送后，CI 测试并构建网页，再同步到 PerfectPixelArt/PerfectPixelArt.github.io 的 gh-pages 分支。
+GitHub 自动部署配置及操作步骤见 [跨仓库 GitHub Pages 部署说明](../.github/DEPLOYMENT.md)。向源码仓库 main 推送后，CI 测试并构建网页，再同步到 RealPixelArt/RealPixelArt.github.io 的 gh-pages 分支。
 
 在项目根目录运行一个静态文件预览服务：
 
@@ -43,8 +43,8 @@ python -m http.server 8765 --bind 127.0.0.1 --directory web
 ## 与 Python 共用一份算法
 
 ```text
-src/pixelperfect/*.py       唯一的算法源文件
-src/pixelperfect/palettes.json  共用的 9 个色库
+src/realpixelart/*.py       唯一的算法源文件
+src/realpixelart/palettes.json  共用的 9 个色库
           ↓ python web/build.py
 web/core.zip               原样打包的 Python 核心 + 浏览器适配器
           ↓ 浏览器内 Web Worker / Pyodide
@@ -61,7 +61,7 @@ PNG / 可选诊断 ZIP
 
 ### 修改后同步
 
-1. 修改 `src/pixelperfect` 中的算法或默认配置。
+1. 修改 `src/realpixelart` 中的算法或默认配置。
 2. 运行 `python web/build.py`，更新 `core.zip`、`core-manifest.json`。
 3. 运行 `python web/build.py --check`，确认网页包与源文件逐字节一致。
 4. 刷新网页并运行浏览器回归。

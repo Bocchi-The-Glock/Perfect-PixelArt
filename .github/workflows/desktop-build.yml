@@ -52,7 +52,7 @@ jobs:
         run: npm run test:cache
       - uses: actions/upload-artifact@v4
         with:
-          name: Perfect-PixelArt-Plus-${{ matrix.target }}
+          name: RealPixelArt-${{ matrix.target }}
           path: |
             desktop/dist/*.exe
             desktop/dist/*.dmg

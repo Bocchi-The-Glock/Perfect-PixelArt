@@ -19,8 +19,8 @@ const watchdog = setTimeout(() => { console.error('Startup benchmark timed out')
 
 async function measure(kind, run) {
   const exe = kind === 'portable'
-    ? path.join(desktop, `dist/Perfect-PixelArt-Plus-${version}-win-x64.exe`)
-    : path.join(desktop, 'dist/win-unpacked/Perfect PixelArt Plus.exe');
+    ? path.join(desktop, `dist/RealPixelArt-${version}-win-x64.exe`)
+    : path.join(desktop, 'dist/win-unpacked/RealPixelArt.exe');
   const profile = path.join(out, kind + '-profile');
   const portFile = path.join(profile, 'DevToolsActivePort');
   if (fs.existsSync(portFile)) fs.unlinkSync(portFile);

@@ -17,9 +17,9 @@ const cases = [
 let executablePath = process.env.PIXELART_EXECUTABLE || require('electron');
 if (packaged && !process.env.PIXELART_EXECUTABLE) {
   executablePath = process.platform === 'win32'
-    ? path.join(desktop, 'dist/win-unpacked/Perfect PixelArt Plus.exe')
+    ? path.join(desktop, 'dist/win-unpacked/RealPixelArt.exe')
     : path.join(desktop, process.arch === 'arm64' ? 'dist/mac-arm64' : 'dist/mac',
-                'Perfect PixelArt Plus.app/Contents/MacOS/Perfect PixelArt Plus');
+                'RealPixelArt.app/Contents/MacOS/RealPixelArt');
 }
 
 (async () => {
@@ -37,31 +37,34 @@ if (packaged && !process.env.PIXELART_EXECUTABLE) {
     page.on('request', r => { if (/^https?:/.test(r.url())) remote.push(r.url()); });
     await page.waitForFunction(() => ['ready', 'error'].includes(document.querySelector('#status')?.dataset.engineState), null, { timeout: 90000 });
     assert.equal(await page.locator('#status').getAttribute('data-engine-state'), 'ready', await page.locator('#status').textContent());
+    assert.equal(await page.title(), 'RealPixelArt');
+    assert.equal(await page.locator('.brand').innerText(), 'Real Pixel Art');
+    assert.equal(await app.evaluate(({ app }) => app.getName()), 'RealPixelArt');
     assert.equal(await page.evaluate(() => isSecureContext && Boolean(crypto.subtle)), true);
     assert.equal(await page.evaluate(() => typeof require), 'undefined');
     const preferences = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences());
     assert.equal(preferences.sandbox, true); assert.equal(preferences.nodeIntegration, false);
     // Click real links; intercept only the OS browser launch to keep tests offline.
-    const repository = 'https://github.com/Bocchi-The-Glock/Perfect-PixelArt';
+    const repository = 'https://github.com/Bocchi-The-Glock/Real-PixelArt';
     await app.evaluate(({ shell }) => {
       globalThis.testRepositoryLinks = [];
       shell.openExternal = async address => { globalThis.testRepositoryLinks.push(address); };
     });
-    for (const selector of ['.brand', '#github-link']) {
+    for (const selector of ['.brand', '#github-header-link', '#github-link']) {
       assert.equal(await page.locator(selector).getAttribute('href'), repository);
       await page.click(selector);
     }
     await page.locator('#github-link').focus(); await page.keyboard.press('Enter');
     const linkDeadline = Date.now() + 5000;
-    while (await app.evaluate(() => globalThis.testRepositoryLinks.length) < 3) {
+    while (await app.evaluate(() => globalThis.testRepositoryLinks.length) < 4) {
       if (Date.now() > linkDeadline) throw new Error('Repository click did not reach the system browser');
       await new Promise(resolve => setTimeout(resolve, 50));
     }
-    await page.evaluate(() => window.open('https://github.com.example.org/Bocchi-The-Glock/Perfect-PixelArt'));
+    await page.evaluate(() => window.open('https://github.com.example.org/Bocchi-The-Glock/Real-PixelArt'));
     const repositoryLinks = await app.evaluate(() => globalThis.testRepositoryLinks);
-    assert.deepEqual(repositoryLinks, [repository, repository, repository]);
+    assert.deepEqual(repositoryLinks, [repository, repository, repository, repository]);
     assert.equal(app.windows().length, 1); assert.equal(page.url(), 'pixelart://app/');
-    console.log('PASS: title, floating GitHub button and keyboard open the repository externally.');
+    console.log('PASS: RealPixelArt branding and all three repository links, including keyboard navigation.');
     const measured = [];
     for (const [i, item] of cases.entries()) {
       const input = fs.readFileSync(path.join(project, 'input', item.name)).toString('base64');
@@ -130,7 +133,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 root=Path(sys.argv[1]); out=Path(sys.argv[2]); sys.path.insert(0,str(root/'src'))
-from pixelperfect import pixelize,Config
+from realpixelart import pixelize,Config
 for i,c in enumerate(json.loads((out/'cases.json').read_text())):
  r=pixelize(root/'input'/c['name'],Config(**c['config']))
  np.testing.assert_array_equal(Image.open(out/f'case-{i}.png').convert('RGBA'),r.image.convert('RGBA'))

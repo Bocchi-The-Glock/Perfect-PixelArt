@@ -9,7 +9,7 @@ let colorCount = null, colorMaximum = 512, colorRevision = 0, pendingColorRevisi
 const colorMinimumStop = 200; // Short, distinct stops for Unlimited and 2.
 const views = { original: { factor: null, x: 0, y: 0 }, result: { factor: null, x: 0, y: 0 } };
 let status = { key: 'selectImage', kind: '', values: {} };
-let theme = preference('pp-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+let theme = preference('realpixelart-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 
 function renderTheme() {
   document.documentElement.dataset.theme = theme;
@@ -210,7 +210,7 @@ $('result-image').onload = refreshZoom;
 const observer = new ResizeObserver(refreshZoom);
 observer.observe($('original-stage')); observer.observe($('result-stage'));
 $('background').onchange = () => { for (const id of ['original-stage', 'result-stage']) $(id).className = `image-stage ${$('background').value}`; };
-$('theme-toggle').onclick = () => { theme = theme === 'dark' ? 'light' : 'dark'; preference('pp-theme', theme); renderTheme(); };
+$('theme-toggle').onclick = () => { theme = theme === 'dark' ? 'light' : 'dark'; preference('realpixelart-theme', theme); renderTheme(); };
 $('language-toggle').onclick = () => { setLanguage(language === 'zh' ? 'en' : 'zh'); renderState(); refreshZoom(); };
 $('scale').oninput = renderState; // Export-only setting: never invalidates or regenerates the native result.
 

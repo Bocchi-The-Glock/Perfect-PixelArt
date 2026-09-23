@@ -8,7 +8,7 @@ const { chromium } = require('playwright');
 const desktop = path.resolve(__dirname, '..');
 const project = path.dirname(desktop);
 const version = require('../package.json').version;
-const executable = path.join(desktop, `dist/Perfect-PixelArt-Plus-${version}-win-x64.exe`);
+const executable = path.join(desktop, `dist/RealPixelArt-${version}-win-x64.exe`);
 const out = path.join(desktop, 'test-results', 'portable-' + Date.now());
 const profile = path.join(out, 'profile');
 fs.mkdirSync(out, { recursive: true });
@@ -67,7 +67,7 @@ const watchdog = setTimeout(() => { console.error('Portable verification timed o
 from pathlib import Path
 from PIL import Image
 root=Path(sys.argv[1]); sys.path.insert(0,str(root/'src'))
-from pixelperfect import pixelize
+from realpixelart import pixelize
 np.testing.assert_array_equal(Image.open(sys.argv[2]).convert('RGBA'),pixelize(root/'input/lastTour.png').image.convert('RGBA'))`;
     execFileSync(process.env.PYTHON || 'python', ['-c', verify, project, path.join(out, 'lastTour.png')], { stdio: 'inherit' });
     fs.writeFileSync(path.join(out, 'verification.json'), JSON.stringify({ executable,

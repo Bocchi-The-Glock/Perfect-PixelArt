@@ -58,13 +58,13 @@ const messages = {
 export function preference(key, value) {
   try { if (value === undefined) return localStorage.getItem(key); localStorage.setItem(key, value); } catch { /* Storage can be disabled. */ }
 }
-export let language = preference('pp-language') || (navigator.language.startsWith('zh') ? 'zh' : 'en');
+export let language = preference('realpixelart-language') || (navigator.language.startsWith('zh') ? 'zh' : 'en');
 export function t(key, values = {}) {
   let text = messages[key]?.[language === 'zh' ? 0 : 1] || key;
   for (const [name, value] of Object.entries(values)) text = text.replaceAll(`{${name}}`, String(value));
   return text;
 }
-export function setLanguage(value) { language = value; preference('pp-language', value); translate(); }
+export function setLanguage(value) { language = value; preference('realpixelart-language', value); translate(); }
 export function translate() {
   document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
   for (const [attribute, target] of [['data-i18n', null], ['data-i18n-title', 'title'], ['data-i18n-aria', 'aria-label'], ['data-i18n-alt', 'alt']]) {

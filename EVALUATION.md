@@ -1,6 +1,6 @@
 # 普通图片像素化评估（2026-09-19）
 
-本次比较的是 **Plus 原网格恢复（`photo_mode=off`）与 Plus 新默认行为（`auto`）**，不是与 perfectPixel-main 比较。原 `grid.py`、`features.py`、`sampling.py` 未修改，新增逻辑集中在 `natural.py`。
+本次比较的是 **RealPixelArt 原网格恢复（`photo_mode=off`）与 RealPixelArt 新默认行为（`auto`）**，不是与 perfectPixel-main 比较。原 `grid.py`、`features.py`、`sampling.py` 未修改，新增逻辑集中在 `natural.py`。
 
 ## 实际输出
 
@@ -16,15 +16,15 @@
 结果保存在 [output/ordinary-evaluation](output/ordinary-evaluation/)。每张 `*-comparison.png` 从左到右是：
 
 1. 输入。
-2. Plus 原网格恢复（关闭新分支）。
-3. Plus 新默认行为，不限颜色。
+2. RealPixelArt 原网格恢复（关闭新分支）。
+3. RealPixelArt 新默认行为，不限颜色。
 4. 新结果另加可选的 32 色后处理。
 
 对比图按同样窗口适配显示，像素放大使用最近邻；标题标出原生尺寸。`*-auto.png` 是真正低分辨率输出，`*-auto-32colors.png` 是独立调色后的输出。处理过程位于 `output/debug/ordinary-evaluation/`。可直接查看 [插画对比](output/ordinary-evaluation/landscape-comparison.png) 和 [照片对比](output/ordinary-evaluation/photograph-comparison.png)。
 
 ## 已验证的保护行为
 
-Python **261 项通过，34.17 秒**，包含新增的 34 项回归。测试仍集中于 `src/tests/test_pixelperfect.py`。
+Python **261 项通过，34.17 秒**，包含新增的 34 项回归。测试仍集中于 `src/tests/test_realpixelart.py`。
 
 - input 六张原图与既有逐像素 SHA256 基准完全一致：bocchi 131×198、bocchi2 125×93、chito 111×166、hollow-knight 70×73、lastTour 331×219、ritsu 156×232。
 - 六张图分别再施加 0.6 像素高斯模糊、JPEG quality=85、1.13 倍双线性缩放，共 18 个额外案例；新旧分支输出尺寸和每个像素相同。这里保证的是新功能不改变原恢复结果，不代表退化后的恢复结果一定是真值。
@@ -140,15 +140,15 @@ JPEG 处理计时减少约 **60.5%**。数据为单次实测，可能受机器�
 
 ### 原因与修复
 
-原 Plus 的横纵边缘投影对比度分别为 0.837 / 0.767，共找到 85 / 109 个投影峰；因此并非没有边缘，也不是触发了原生 1×1 保护。候选格距 10.6667 经局部格线修正后的分数为 **0.301954**，低于接受门槛 **0.31**，于是进入普通图片像素化，输出 256×256、置信分数 0。
+原 RealPixelArt 的横纵边缘投影对比度分别为 0.837 / 0.767，共找到 85 / 109 个投影峰；因此并非没有边缘，也不是触发了原生 1×1 保护。候选格距 10.6667 经局部格线修正后的分数为 **0.301954**，低于接受门槛 **0.31**，于是进入普通图片像素化，输出 256×256、置信分数 0。
 
-原 main 的 NumPy 后端认为 FFT 格距不一致，改用梯度间距：横纵估计为 13 / 10 像素，平均 **11.5 像素**，经过自身格线修正后输出 **86×86**。它不使用 Plus 的上述分数门槛。
+原 main 的 NumPy 后端认为 FFT 格距不一致，改用梯度间距：横纵估计为 13 / 10 像素，平均 **11.5 像素**，经过自身格线修正后输出 **86×86**。它不使用 RealPixelArt 的上述分数门槛。
 
 修复补上有限的邻近格距搜索，而不是降低门槛。该图额外比较 11 个候选，最终 **10.5×10.5** 的名义格距、**99×99** 网格得到 **0.320228**；局部修正后实际格宽/高的中位数为 10 像素，覆盖完整输入。格距附近的变化会改变局部边缘吸附结果，所以只调整起点并不能替代这一步。采样、alpha 和颜色后处理均未修改，已接受网格不会进入新增搜索。
 
-- [Plus 原生结果](output/1770467992323.png)
-- [main / Plus 对比图](output/debug/grid-investigation/comparison/comparison.png)：左 main 86×86，右 Plus 99×99，均为 4 倍最近邻展示、白底；各自程序使用默认参数和自身检测。
-- [修复前数据](output/debug/grid-investigation/plus-before.json) / [修复后过程与格线](output/debug/1770467992323/info.json)
+- [RealPixelArt 原生结果](output/1770467992323.png)
+- [main / RealPixelArt 对比图](output/debug/grid-investigation/comparison/comparison.png)：左 main 86×86，右 RealPixelArt 99×99，均为 4 倍最近邻展示、白底；各自程序使用默认参数和自身检测。
+- [修复前数据](output/debug/grid-investigation/realpixelart-before.json) / [修复后过程与格线](output/debug/1770467992323/info.json)
 
 ### 验证与性能
 
@@ -164,7 +164,7 @@ Windows x64 / Python 3.12.11 / NumPy 1.26.4 / Pillow 12.1.0 单次实际 API 计
 
 ### 后续调整：接受门槛改为 0.30
 
-按用户要求，初始候选与邻近格距细化统一使用 **0.30** 接受门槛；细化触发范围对应改为 `[0.25, 0.30)`，双向间距支持门槛 0.10、低置信提示门槛 0.45 不变。该图原候选 0.301954 现在直接通过，名义格距 10.6667，输出 **96×96**，不再触发额外格距细化。上述 99×99 属于前一版门槛 0.31 的历史结果；结果 PNG、过程文件及 main/Plus 对比图已更新为本版 96×96。
+按用户要求，初始候选与邻近格距细化统一使用 **0.30** 接受门槛；细化触发范围对应改为 `[0.25, 0.30)`，双向间距支持门槛 0.10、低置信提示门槛 0.45 不变。该图原候选 0.301954 现在直接通过，名义格距 10.6667，输出 **96×96**，不再触发额外格距细化。上述 99×99 属于前一版门槛 0.31 的历史结果；结果 PNG、过程文件及 main/RealPixelArt 对比图已更新为本版 96×96。
 
 本次 **288 项 pytest 通过（36.76 秒）**，包含原图直接接受、裁剪/模糊变体继续细化、原有六张图片像素基准及噪声/普通图片回退。网页核心重新打包并通过逐字节同步检查；上一节 35 组浏览器记录对应门槛 0.31，本次未重新测量浏览器性能。
 
@@ -223,7 +223,7 @@ Windows x64 / Python 3.12.11 / NumPy 1.26.4 / Pillow 12.1.0 单次实际 API 计
 
 ### 实际结果
 
-| 输入 | 修改前 Plus | 修改后 Plus | 说明 |
+| 输入 | 修改前 RealPixelArt | 修改后 RealPixelArt | 说明 |
 |---|---:|---:|---|
 | `exec-c6a62802-b08a-44b3-b383-0c3ecfaa2c3a.png`，1254×1254 | 256×256，普通像素化 | **208×209，估算间距 6** | 横纵峰间距中位数为 6、14.5，采用较细方向 |
 | `exec-7ad1ad37-02cd-418a-98c5-ca860384c43a.png`，1254×1254 | 256×256，普通像素化 | **182×180，估算间距 7** | 中位数为 7、15；复用局部切线调整 |
@@ -232,7 +232,7 @@ Windows x64 / Python 3.12.11 / NumPy 1.26.4 / Pillow 12.1.0 单次实际 API 计
 
 两张素材图没有已知原始网格真值，本次验证的是估算分支确实由几何证据触发，不能据输出尺寸宣称恢复准确率更高。原网格候选及拒绝原因保留，`grid.estimated=true`、置信分数 0，网页与 CLI 都明确说明原始格距未确认。
 
-[四列对比图](output/debug/edge-estimate/comparison.png) 从左到右为原图、原 main OpenCV 默认结果、本次修改前 Plus、本次修改后 Plus。使用相同 500×500 展示区域、最近邻预览，标出原生尺寸，不干预各自网格。main 为此前直接调用原程序保存的 178×175 结果。
+[四列对比图](output/debug/edge-estimate/comparison.png) 从左到右为原图、原 main OpenCV 默认结果、本次修改前 RealPixelArt、本次修改后 RealPixelArt。使用相同 500×500 展示区域、最近邻预览，标出原生尺寸，不干预各自网格。main 为此前直接调用原程序保存的 178×175 结果。
 
 ### 回归验证
 
