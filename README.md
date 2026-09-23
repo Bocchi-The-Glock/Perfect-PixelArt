@@ -1,5 +1,7 @@
 # RealPixelArt
 
+**中文** | [English](README.en.md)
+
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/License-Not%20specified-lightgrey.svg)
 
@@ -56,8 +58,6 @@ python realpixelart.py -i input/lastTour.png --colors 32 --scale 4 --debug
 
 上例限制为最多 32 色，并将结果放大 4 倍。使用 `--help` 查看全部参数。算法运行依赖只有 NumPy 和 Pillow。
 
-</details>
-
 ## 算法
 
 处理分为四步，网页与桌面版共用同一套 Python 核心：
@@ -65,7 +65,7 @@ python realpixelart.py -i input/lastTour.png --colors 32 --scale 4 --debug
 1. 分别计算横纵方向的颜色与透明度变化，完全透明像素的隐藏 RGB 不参与颜色判断
 2. 结合 FFT 的周期线索和边缘间距提出候选，同时比较半倍、两倍间距，搜索网格起点，并做小范围局部校正。FFT 不直接决定最终格距
 3. 检查边缘与格线是否吻合；对部分较弱候选，水平垂直连续边段验证，并保护已有的原生单像素细节
-4. *每格采用中心优先的稳健取色，结合邻近样本检查异常点，保留透明度。限色和色库匹配在这一步之后单独执行
+4. 每格采用中心优先的稳健取色，结合邻近样本检查异常点，保留透明度。限色和色库匹配在这一步之后单独执行
 
 ![bocchi2 处理过程：左为 FFT 频谱，中为颜色与透明度边缘，右为最终网格局部](docs/images/algorithm-process.png)
 
