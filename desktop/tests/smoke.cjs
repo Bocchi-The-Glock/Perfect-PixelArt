@@ -105,7 +105,17 @@ if (packaged && !process.env.PIXELART_EXECUTABLE) {
     await page.click('#run');
     await page.waitForFunction(() => !document.querySelector('#download').disabled, null, { timeout: 90000 });
     assert.equal(await page.locator('#metric-grid').textContent(), '331 × 219');
+    assert.equal(await page.locator('#result-size').textContent(), '331 × 219');
+    const preview = await page.locator('#result-image').getAttribute('src');
+    for (const scale of [2, 16, 1]) {
+      await page.locator('#scale').fill(String(scale));
+      assert.equal(await page.locator('#result-size').textContent(),
+        '331 × 219' + (scale === 1 ? '' : ` (${331 * scale} × ${219 * scale})`));
+      assert.equal(await page.locator('#result-image').getAttribute('src'), preview);
+      assert.equal(await page.locator('#download').isEnabled(), true);
+    }
     await page.locator('#scale').fill('3');
+    assert.equal(await page.locator('#result-size').textContent(), '331 × 219 (993 × 657)');
     console.log('Exporting PNG and ZIP...');
     await page.click('#download');
     await page.waitForFunction(() => !document.querySelector('#download').disabled);
@@ -147,6 +157,19 @@ with zipfile.ZipFile(out/'lastTour_debug.zip') as z:
 print('PASS: output pixels and grid match Python; native 3x PNG and diagnostic ZIP verified.')
 `;
     console.log(execFileSync(process.env.PYTHON || 'python', ['-c', verify, project, out], { encoding: 'utf8' }));
+    // This input produces an estimated-grid warning in metadata, without a banner in the UI.
+    await page.setInputFiles('#file-input', path.join(project, 'input', cases[2].name));
+    assert.equal(await page.locator('#result-size').textContent(), '—');
+    await page.click('#run');
+    await page.waitForFunction(() => !document.querySelector('#download').disabled, null, { timeout: 90000 });
+    assert.match(await page.locator('#status').textContent(), /已按方正边缘估算网格/);
+    assert.equal(await page.locator('#warnings, .warning-box').count(), 0);
+    await page.click('#language-toggle');
+    assert.equal(await page.locator('#warnings, .warning-box').count(), 0);
+    await page.click('#clear-file');
+    assert.equal(await page.locator('#result-size').textContent(), '—');
+    assert.deepEqual(errors, []);
+    console.log('PASS: export size labels update without regeneration; estimated-grid banner removed.');
     fs.writeFileSync(path.join(out, 'verification.json'), JSON.stringify({ packaged,
       executable: executablePath, cases: measured, downloads, repository_links: repositoryLinks, page_errors: errors, remote_requests: remote,
       runtime: await app.evaluate(() => process.versions) }, null, 2));

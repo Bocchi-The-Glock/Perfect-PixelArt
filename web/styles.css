@@ -5,7 +5,7 @@
   --bg: #f6f7f5; --surface: #fff; --text: #27312a; --line: #dfe4dc;
   --muted: #677264; --accent: #34714a; --soft: #e4efdd; --button: #2f4836;
   --checker-a: #f8f9f6; --checker-b: #edf0e9;
-  --warning-bg: #fcf8eb; --warning-line: #e8d9b3; --warning-text: #86652b; --error: #b64e36;
+  --error: #b64e36;
   color: var(--text); background: var(--bg);
 }
 :root[data-theme="dark"] {
@@ -13,7 +13,7 @@
   --bg: #101112; --surface: #191b1d; --text: #e5e7e6; --line: #36393b;
   --muted: #a8ada9; --accent: #9fcead; --soft: #293d30; --button: #375b43;
   --checker-a: #1c1e20; --checker-b: #242729;
-  --warning-bg: #30291b; --warning-line: #55472d; --warning-text: #e0c18a; --error: #f39884;
+  --error: #f39884;
 }
 * { box-sizing: border-box; }
 body { margin: 0; }
@@ -43,7 +43,7 @@ fieldset:disabled { opacity: .65; }
 [data-theme="dark"] .sun-icon { display: block; }
 main { max-width: 1800px; margin: auto; padding: 14px 24px 84px; display: grid; grid-template-columns: 260px minmax(0, 1fr); column-gap: 18px; align-items: start; }
 .preview-section { grid-column: 2; grid-row: 1; min-width: 0; }
-main > .warning-box, main > .diagnostics { grid-column: 2; min-width: 0; }
+main > .diagnostics { grid-column: 2; min-width: 0; }
 .preview-toolbar { display: flex; justify-content: flex-end; gap: 16px; margin-bottom: 12px; }
 .preview-toolbar label { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .preview-toolbar select { width: auto; margin: 0; height: 30px; font-size: 12px; }
@@ -138,7 +138,6 @@ input[type="range"] { flex: 1; min-width: 0; margin: 0; accent-color: var(--acce
 #status { min-width: 0; overflow-wrap: anywhere; }
 .status-strip.busy .status-icon { animation: spin 1.5s linear infinite; }
 .status-strip.error { color: var(--error); }
-.warning-box { border: 1px solid var(--warning-line); background: var(--warning-bg); color: var(--warning-text); font-size: 12px; padding: 10px 14px; border-radius: 7px; line-height: 1.7; margin-bottom: 12px; }
 .diagnostics { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
 .diagnostic-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 15px 0; }
 .diagnostic-tabs button { border: 1px solid var(--line); background: var(--surface); border-radius: 5px; font-size: 12px; padding: 6px 12px; }

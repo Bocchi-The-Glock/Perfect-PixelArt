@@ -26,6 +26,10 @@ function renderState() {
   $('original-label').textContent = file?.name || t('noFile');
   $('original-placeholder').querySelector('strong').textContent = t(previewUnavailable ? 'previewLater' : 'choose');
   $('scale-value').textContent = `${$('scale').value}×`;
+  if (result) {
+    const [width, height] = result.meta.grid.output_size, scale = Number($('scale').value);
+    $('result-size').textContent = `${width} × ${height}` + (scale === 1 ? '' : ` (${width * scale} × ${height * scale})`);
+  } else $('result-size').textContent = '—';
   renderColorLimit();
   let visibleStatus = status;
   if (engine.state === 'loading' && status.kind !== 'error') visibleStatus = { key: engine.key, kind: 'busy' };
@@ -38,16 +42,6 @@ function renderState() {
   if (result?.meta.grid.native_preserved && visibleStatus.key === 'done') $('status').textContent = t('nativePreserved');
   if (result?.meta.grid.stylized && visibleStatus.key === 'done') $('status').textContent = t('stylized');
   if (result?.meta.grid.estimated && visibleStatus.key === 'done') $('status').textContent = t('estimatedGrid');
-  if (result) {
-    const notes = [];
-    if (result.meta.input?.frames > 1) notes.push(t('primaryPhoto', {
-      frame: result.meta.input.selected_frame + 1, count: result.meta.input.frames,
-    }));
-    if (result.meta.warnings.some(note => !note.startsWith('MPO photo:'))) {
-      notes.push(t(result.meta.grid.estimated ? 'estimatedGridHelp' : result.meta.grid.stylized ? 'stylizedHelp' : result.meta.grid.fallback ? 'fallback' : 'lowConfidence'));
-    }
-    $('warnings').textContent = notes.join(' ');
-  }
   const active = $('diagnostic-tabs').querySelector('.active');
   if (active) $('diagnostic-image').alt = t(active.dataset.i18n);
   for (const option of $('palette').options) {
@@ -94,7 +88,7 @@ function clearResult() {
   if (downloadUrl) URL.revokeObjectURL(downloadUrl);
   urls = []; downloadUrl = null; result = null; stale = false;
   $('result-image').removeAttribute('src'); $('result-image').hidden = true;
-  $('result-placeholder').hidden = false; $('result-summary').hidden = true; $('warnings').hidden = true;
+  $('result-placeholder').hidden = false; $('result-summary').hidden = true;
   $('diagnostics').hidden = true; $('download-debug').hidden = true;
   $('diagnostic-tabs').replaceChildren(); $('diagnostic-image').removeAttribute('src');
   $('download-debug').removeAttribute('href'); $('result-size').textContent = '—';
@@ -326,12 +320,11 @@ function showResult(data) {
   }
   previewUnavailable = false; $('original-image').hidden = false; $('original-placeholder').hidden = true; $('original-image').src = originalUrl;
   $('result-image').src = blobUrl(data.native); $('result-image').hidden = false; $('result-placeholder').hidden = true;
-  $('result-size').textContent = meta.grid.output_size.join(' × ');
   $('metric-grid').textContent = meta.grid.output_size.join(' × ');
   $('metric-spacing').textContent = `${meta.grid.sx.toFixed(2)} × ${meta.grid.sy.toFixed(2)}`;
   $('metric-confidence').textContent = meta.confidence.toFixed(3);
   $('metric-time').textContent = `${meta.timings.total_with_export.toFixed(2)} s`;
-  $('result-summary').hidden = false; $('warnings').hidden = !meta.warnings.length;
+  $('result-summary').hidden = false;
   if (meta.debug) {
     $('download-debug').href = blobUrl(data.debugZip, 'application/zip');
     $('download-debug').download = meta.name.replace(/\.png$/i, '_debug.zip'); $('download-debug').hidden = false;
@@ -413,7 +406,7 @@ $('settings').onsubmit = async event => {
   event.preventDefault(); if (!file || busy || !defaults) return;
   if (!$('color-settings').reportValidity()) return;
   const id = ++generation;
-  invalidate(); setBusy(true, 'process'); $('warnings').hidden = true; setStatus('reading', 'busy');
+  invalidate(); setBusy(true, 'process'); setStatus('reading', 'busy');
   try {
     const bytes = await file.arrayBuffer(); if (id !== generation) return;
     const preview = $('original-image');
